@@ -2,6 +2,9 @@
 
 🎨 基于 OpenAI `gpt-image-2` 接口的图片生成与编辑工具。提供简洁的 Web UI，支持文本生成图片、参考图编辑、参数调节与历史记录管理。
 
+在线体验：
+https://cooksleep.github.io/gpt_image_playground/
+
 ## 示例截图
 
 | 主界面 | 任务详情 | 移动端 |
