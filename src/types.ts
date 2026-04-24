@@ -93,6 +93,7 @@ export interface ImageGenerationRequest {
 
 export interface ImageResponseItem {
   b64_json?: string
+  url?: string
 }
 
 export interface ImageApiResponse {

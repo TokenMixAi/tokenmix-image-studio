@@ -1,4 +1,4 @@
-import type { AppSettings, TaskParams } from '../types'
+import type { AppSettings, ImageApiResponse, TaskParams } from '../types'
 
 const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -26,6 +26,39 @@ function buildUrl(baseUrl: string, path: string): string {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
   const apiPath = ['v1', path.replace(/^\/+/, '')].join('/')
   return normalizedBaseUrl ? `${normalizedBaseUrl}/${apiPath}` : `/${apiPath}`
+}
+
+function isHttpUrl(value: unknown): value is string {
+  return typeof value === 'string' && /^https?:\/\//i.test(value)
+}
+
+function normalizeBase64Image(value: string, fallbackMime: string): string {
+  return value.startsWith('data:') ? value : `data:${fallbackMime};base64,${value}`
+}
+
+async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  let binary = ''
+
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    const chunk = bytes.subarray(i, i + 0x8000)
+    binary += String.fromCharCode(...chunk)
+  }
+
+  return `data:${blob.type || fallbackMime};base64,${btoa(binary)}`
+}
+
+async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, signal: AbortSignal): Promise<string> {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    signal,
+  })
+
+  if (!response.ok) {
+    throw new Error(`图片 URL 下载失败：HTTP ${response.status}`)
+  }
+
+  return blobToDataUrl(await response.blob(), fallbackMime)
 }
 
 export interface CallApiOptions {
@@ -130,7 +163,7 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
       throw new Error(errorMsg)
     }
 
-    const payload = await response.json()
+    const payload = await response.json() as ImageApiResponse
     const data = payload.data
     if (!Array.isArray(data) || !data.length) {
       throw new Error('接口未返回图片数据')
@@ -139,8 +172,14 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
     const images: string[] = []
     for (const item of data) {
       const b64 = item.b64_json
-      if (!b64) continue
-      images.push(`data:${mime};base64,${b64}`)
+      if (b64) {
+        images.push(normalizeBase64Image(b64, mime))
+        continue
+      }
+
+      if (isHttpUrl(item.url)) {
+        images.push(await fetchImageUrlAsDataUrl(item.url, mime, controller.signal))
+      }
     }
 
     if (!images.length) {

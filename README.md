@@ -66,26 +66,27 @@ https://cooksleep.github.io/gpt_image_playground/
 ### Docker 部署
 
 ```bash
-# 构建镜像
-docker build -f deploy/Dockerfile -t gpt-image-playground \
-  --build-arg VITE_DEFAULT_API_URL=https://api.openai.com .
-
-# 运行容器
-docker run -d -p 8080:80 gpt-image-playground
+# 使用项目官方镜像
+docker run -d -p 8080:80 ghcr.io/cooksleep/gpt_image_playground:latest
 ```
 
 浏览器访问 `http://localhost:8080`。
+
+也可以自行构建镜像：
+
+```bash
+docker build -f deploy/Dockerfile -t gpt-image-playground \
+  --build-arg VITE_DEFAULT_API_URL=https://api.openai.com .
+
+docker run -d -p 8080:80 gpt-image-playground
+```
 
 也可以使用 `docker compose`：
 
 ```yaml
 services:
   gpt-image-playground:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
-      args:
-        VITE_DEFAULT_API_URL: https://api.openai.com
+    image: ghcr.io/cooksleep/gpt_image_playground:latest
     ports:
       - "8080:80"
     restart: unless-stopped
@@ -98,6 +99,12 @@ docker compose up -d
 ### GitHub Pages 部署
 
 本项目已包含 GitHub Actions 工作流（`.github/workflows/deploy.yml`），当推送符合 `v*` 的 tag 时会自动构建并部署到 GitHub Pages。
+
+同时，`.github/workflows/docker.yml` 会在推送 `v*` tag 时自动构建并发布 Docker 镜像到 GitHub Container Registry：
+
+- `ghcr.io/cooksleep/gpt_image_playground:<版本号>`，例如 `0.1.8`
+- `ghcr.io/cooksleep/gpt_image_playground:<主版本.次版本>`，例如 `0.1`
+- `ghcr.io/cooksleep/gpt_image_playground:latest`
 
 启用步骤：
 

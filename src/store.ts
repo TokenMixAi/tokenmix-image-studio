@@ -414,26 +414,38 @@ export async function exportData() {
     const tasks = await getAllTasks()
     const images = await getAllImages()
     const { settings } = useStore.getState()
+    const exportedAt = Date.now()
+    const imageCreatedAtFallback = new Map<string, number>()
+
+    for (const task of tasks) {
+      for (const id of [...(task.inputImageIds || []), ...(task.outputImages || [])]) {
+        const prev = imageCreatedAtFallback.get(id)
+        if (prev == null || task.createdAt < prev) {
+          imageCreatedAtFallback.set(id, task.createdAt)
+        }
+      }
+    }
 
     const imageFiles: ExportData['imageFiles'] = {}
-    const zipFiles: Record<string, Uint8Array> = {}
+    const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
 
     for (const img of images) {
       const { ext, bytes } = dataUrlToBytes(img.dataUrl)
       const path = `images/${img.id}.${ext}`
-      imageFiles[img.id] = { path, createdAt: img.createdAt, source: img.source }
-      zipFiles[path] = bytes
+      const createdAt = img.createdAt ?? imageCreatedAtFallback.get(img.id) ?? exportedAt
+      imageFiles[img.id] = { path, createdAt, source: img.source }
+      zipFiles[path] = [bytes, { mtime: new Date(createdAt) }]
     }
 
     const manifest: ExportData = {
       version: 2,
-      exportedAt: new Date().toISOString(),
+      exportedAt: new Date(exportedAt).toISOString(),
       settings,
       tasks,
       imageFiles,
     }
 
-    zipFiles['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2))
+    zipFiles['manifest.json'] = [strToU8(JSON.stringify(manifest, null, 2)), { mtime: new Date(exportedAt) }]
 
     const zipped = zipSync(zipFiles, { level: 6 })
     const blob = new Blob([zipped.buffer as ArrayBuffer], { type: 'application/zip' })
