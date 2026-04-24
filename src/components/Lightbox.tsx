@@ -370,7 +370,7 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-[60] flex items-center justify-center select-none touch-none"
+      className="fixed inset-0 z-[60] flex items-center justify-center select-none"
       style={{ cursor: isZoomed ? (isDragging ? 'grabbing' : 'grab') : 'pointer' }}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
@@ -379,7 +379,7 @@ function LightboxInner({ src, onClose, showNav, currentIndex, total, onPrev, onN
       <div className="relative animate-zoom-in">
         <img
           src={src}
-          className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl pointer-events-none"
+          className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
           style={{
             transform: `translate(${tx}px, ${ty}px) scale(${s})`,
             transition: isDragging ? 'none' : 'transform 0.2s ease-out',
