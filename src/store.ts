@@ -22,6 +22,7 @@ import {
   hashDataUrl,
 } from './lib/db'
 import { callImageApi } from './lib/api'
+import { normalizeImageSize } from './lib/size'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -220,11 +221,19 @@ export async function submitTask() {
     await storeImage(img.dataUrl)
   }
 
+  const normalizedParams = {
+    ...params,
+    size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
+  }
+  if (normalizedParams.size !== params.size) {
+    useStore.getState().setParams({ size: normalizedParams.size })
+  }
+
   const taskId = genId()
   const task: TaskRecord = {
     id: taskId,
     prompt: prompt.trim(),
-    params: { ...params },
+    params: normalizedParams,
     inputImageIds: inputImages.map((i) => i.id),
     outputImages: [],
     status: 'running',

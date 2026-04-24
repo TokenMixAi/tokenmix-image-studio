@@ -1,7 +1,9 @@
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { useStore, submitTask, addImageFromFile } from '../store'
 import { DEFAULT_PARAMS } from '../types'
+import { normalizeImageSize } from '../lib/size'
 import Select from './Select'
+import SizePickerModal from './SizePickerModal'
 
 /** 通用悬浮气泡提示 */
 function ButtonTooltip({ visible, text }: { visible: boolean; text: string }) {
@@ -52,6 +54,7 @@ export default function InputBar() {
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
+  const [showSizePicker, setShowSizePicker] = useState(false)
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
   const [outputCompressionInput, setOutputCompressionInput] = useState(
@@ -343,18 +346,14 @@ export default function InputBar() {
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
       <label className="flex flex-col gap-0.5">
         <span className="text-gray-400 dark:text-gray-500 ml-1">尺寸</span>
-        <input
-          value={params.size}
-          onChange={(e) => setParams({ size: e.target.value })}
-          onBlur={(e) => {
-            if (!e.target.value.trim()) {
-              setParams({ size: DEFAULT_PARAMS.size })
-            }
-          }}
-          type="text"
-          placeholder="auto / WxH"
-          className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] focus:outline-none text-xs transition-all duration-200 shadow-sm"
-        />
+        <button
+          type="button"
+          onClick={() => setShowSizePicker(true)}
+          className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] focus:outline-none text-xs text-left transition-all duration-200 shadow-sm font-mono"
+          title="选择尺寸"
+        >
+          {normalizeImageSize(params.size) || DEFAULT_PARAMS.size}
+        </button>
       </label>
       <label className="flex flex-col gap-0.5">
         <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
@@ -462,6 +461,14 @@ export default function InputBar() {
             </div>
           </div>
         </div>
+      )}
+
+      {showSizePicker && (
+        <SizePickerModal
+          currentSize={params.size}
+          onSelect={(size) => setParams({ size })}
+          onClose={() => setShowSizePicker(false)}
+        />
       )}
 
       <div className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-4xl px-3 sm:px-4 transition-all duration-300">
