@@ -63,7 +63,6 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
       formData.append('prompt', prompt)
       formData.append('size', params.size)
       formData.append('quality', params.quality)
-      formData.append('response_format', 'b64_json')
       formData.append('output_format', params.output_format)
       formData.append('moderation', params.moderation)
 
@@ -92,7 +91,6 @@ export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult>
         prompt,
         size: params.size,
         quality: params.quality,
-        response_format: 'b64_json',
         output_format: params.output_format,
         moderation: params.moderation,
       }

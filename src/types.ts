@@ -83,7 +83,6 @@ export interface ImageGenerationRequest {
   prompt: string
   size: string
   quality: string
-  response_format: 'b64_json'
   output_format: string
   moderation: string
   output_compression?: number
