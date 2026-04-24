@@ -75,7 +75,12 @@ export default function SettingsModal() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">设置</h2>
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">设置</h2>
+            <span className="text-lg font-bold text-gray-300 dark:text-gray-600 select-none">
+              v{__APP_VERSION__}
+            </span>
+          </div>
           <button
             onClick={handleClose}
             className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-white/[0.06] transition text-gray-400"
@@ -216,11 +221,6 @@ export default function SettingsModal() {
           >
             清空所有数据
           </button>
-        </div>
-
-        {/* 版本号 */}
-        <div className="pt-4 text-center">
-          <span className="text-[11px] text-gray-300 dark:text-gray-600 select-none">v{__APP_VERSION__}</span>
         </div>
       </div>
     </div>
