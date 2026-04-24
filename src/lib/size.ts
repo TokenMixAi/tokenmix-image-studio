@@ -44,7 +44,39 @@ export function formatImageRatio(width: number, height: number) {
 
   const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b)
   const divisor = gcd(roundedWidth, roundedHeight)
-  return `${roundedWidth / divisor}:${roundedHeight / divisor}`
+  const simplifiedWidth = roundedWidth / divisor
+  const simplifiedHeight = roundedHeight / divisor
+  const simplified = `${simplifiedWidth}:${simplifiedHeight}`
+  const commonRatios = [
+    [1, 1],
+    [4, 3],
+    [3, 4],
+    [3, 2],
+    [2, 3],
+    [16, 9],
+    [9, 16],
+    [21, 9],
+    [9, 21],
+  ]
+
+  for (const [commonWidth, commonHeight] of commonRatios) {
+    if (simplifiedWidth === commonWidth && simplifiedHeight === commonHeight) {
+      return simplified
+    }
+  }
+
+  const actualRatio = roundedWidth / roundedHeight
+  const nearest = commonRatios
+    .map(([commonWidth, commonHeight]) => {
+      const ratio = commonWidth / commonHeight
+      return {
+        label: `${commonWidth}:${commonHeight}`,
+        delta: Math.abs(actualRatio - ratio) / ratio,
+      }
+    })
+    .sort((a, b) => a.delta - b.delta)[0]
+
+  return nearest && nearest.delta <= 0.01 ? `≈${nearest.label}` : simplified
 }
 
 export function calculateImageSize(tier: SizeTier, ratio: string) {

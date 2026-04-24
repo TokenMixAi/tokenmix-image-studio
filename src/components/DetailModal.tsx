@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
@@ -15,6 +15,9 @@ export default function DetailModal() {
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
   const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
   const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
+  const imagePanelRef = useRef<HTMLDivElement>(null)
+  const mainImageRef = useRef<HTMLImageElement>(null)
+  const [imageLabelLeft, setImageLabelLeft] = useState(8)
 
   const task = useMemo(
     () => tasks.find((t) => t.id === detailTaskId) ?? null,
@@ -81,6 +84,22 @@ export default function DetailModal() {
     }
   }, [currentOutputImageId, currentOutputImageSrc])
 
+  useEffect(() => {
+    const updateImageLabelLeft = () => {
+      const panel = imagePanelRef.current
+      const image = mainImageRef.current
+      if (!panel || !image) return
+
+      const panelRect = panel.getBoundingClientRect()
+      const imageRect = image.getBoundingClientRect()
+      setImageLabelLeft(Math.max(8, imageRect.left - panelRect.left))
+    }
+
+    updateImageLabelLeft()
+    window.addEventListener('resize', updateImageLabelLeft)
+    return () => window.removeEventListener('resize', updateImageLabelLeft)
+  }, [currentOutputImageSrc])
+
   if (!task) return null
 
   const outputLen = task.outputImages?.length || 0
@@ -140,18 +159,28 @@ export default function DetailModal() {
         onClick={(e) => e.stopPropagation()}
       >
         {/* 左侧：图片 */}
-        <div className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
+        <div ref={imagePanelRef} className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
           {task.status === 'done' && outputLen > 0 && (
             <>
               <img
+                ref={mainImageRef}
                 src={currentOutputImageSrc}
-                className="max-w-full max-h-full object-contain cursor-pointer p-4"
+                className="max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain cursor-pointer"
+                onLoad={() => {
+                  const panel = imagePanelRef.current
+                  const image = mainImageRef.current
+                  if (!panel || !image) return
+
+                  const panelRect = panel.getBoundingClientRect()
+                  const imageRect = image.getBoundingClientRect()
+                  setImageLabelLeft(Math.max(8, imageRect.left - panelRect.left))
+                }}
                 onClick={() =>
                   setLightboxImageId(task.outputImages[imageIndex], task.outputImages)
                 }
                 alt=""
               />
-              <div className="absolute top-2 left-2 flex items-center gap-1.5">
+              <div className="absolute top-[15px] flex items-center gap-1.5" style={{ left: imageLabelLeft }}>
                 {currentImageRatio && currentImageSize ? (
                   <>
                     <span className="bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
