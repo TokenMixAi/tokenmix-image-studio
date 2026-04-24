@@ -286,12 +286,7 @@ async function executeTask(taskId: string) {
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
-    useStore
-      .getState()
-      .showToast(
-        `生成失败：${err instanceof Error ? err.message : String(err)}`,
-        'error',
-      )
+    useStore.getState().setDetailTaskId(taskId)
   }
 
   // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）

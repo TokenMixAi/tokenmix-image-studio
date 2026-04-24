@@ -48,6 +48,7 @@ https://cooksleep.github.io/gpt_image_playground/
 
 ### 6. API 配置
 - **自定义端点**：支持配置 Base URL，兼容 OpenAI 官方 API 及第三方中转。
+- **默认 API URL**：支持通过 `VITE_DEFAULT_API_URL` 设置默认 API URL，未手动填写时会使用它作为默认值。
 - **模型 ID**：可自定义模型标识。
 - **超时控制**：可配置请求超时时间。
 - **查询参数填充**：支持通过 `?apiUrl=` 和 `?apiKey=` 在页面打开时快速填入 API 配置，应用后会自动从地址栏移除。
@@ -58,7 +59,8 @@ https://cooksleep.github.io/gpt_image_playground/
 
 ```bash
 # 构建镜像
-docker build -f deploy/Dockerfile -t gpt-image-playground .
+docker build -f deploy/Dockerfile -t gpt-image-playground \
+  --build-arg VITE_DEFAULT_API_URL=https://api.openai.com .
 
 # 运行容器
 docker run -d -p 8080:80 gpt-image-playground
@@ -74,6 +76,8 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile
+      args:
+        VITE_DEFAULT_API_URL: https://api.openai.com
     ports:
       - "8080:80"
     restart: unless-stopped
@@ -96,8 +100,8 @@ docker compose up -d
 示例：
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 ### 构建产物
@@ -110,6 +114,12 @@ npm run build
 
 ### 本地开发
 
+可选：在项目根目录新建 `.env.local`，为默认 API URL 提供环境变量。
+
+```bash
+VITE_DEFAULT_API_URL=https://api.openai.com
+```
+
 ```bash
 # 安装依赖
 npm install
@@ -119,6 +129,10 @@ npm run dev
 ```
 
 浏览器访问 `http://localhost:5173`，在右上角设置中填入 API Key 即可使用。
+
+说明：
+- `VITE_DEFAULT_API_URL` 是构建时环境变量，会作为默认 API URL 写入前端。
+- 如果设置页中的 API URL 为空，应用会回退到 `VITE_DEFAULT_API_URL`，未提供时则回退到 `https://api.openai.com`。
 
 ## 技术栈
 

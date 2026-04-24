@@ -8,6 +8,7 @@ export default function DetailModal() {
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const showToast = useStore((s) => s.showToast)
 
   const [imageIndex, setImageIndex] = useState(0)
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
@@ -76,6 +77,16 @@ export default function DetailModal() {
     })
   }
 
+  const handleCopyError = async () => {
+    const errorText = task.error || '生成失败'
+    try {
+      await navigator.clipboard.writeText(errorText)
+      showToast('完整报错已复制', 'success')
+    } catch {
+      showToast('复制报错失败', 'error')
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -136,11 +147,31 @@ export default function DetailModal() {
             </svg>
           )}
           {task.status === 'error' && (
-            <div className="text-center px-4">
+            <div className="w-full max-w-md px-4 text-center">
               <svg className="w-10 h-10 text-red-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="text-sm text-red-500">{task.error || '生成失败'}</p>
+              <p
+                className="overflow-hidden text-sm leading-6 text-red-500 break-all"
+                style={{
+                  display: '-webkit-box',
+                  WebkitBoxOrient: 'vertical',
+                  WebkitLineClamp: 4,
+                }}
+              >
+                {task.error || '生成失败'}
+              </p>
+              <button
+                type="button"
+                onClick={handleCopyError}
+                className="mt-3 inline-flex items-center justify-center rounded-full border border-red-200/80 bg-white/80 px-3 py-1.5 text-red-500 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-white/[0.04] dark:hover:bg-red-500/10"
+                aria-label="复制完整报错"
+                title="复制完整报错"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 10h6a2 2 0 002-2v-8a2 2 0 00-2-2h-6a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
             </div>
           )}
         </div>

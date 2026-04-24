@@ -104,7 +104,7 @@ export default function SettingsModal() {
               onChange={(e) => setDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
               onBlur={(e) => commitSettings({ ...draft, baseUrl: e.target.value })}
               type="text"
-              placeholder="https://api.openai.com"
+              placeholder={DEFAULT_SETTINGS.baseUrl}
               className="w-full px-4 py-2.5 bg-gray-50/50 dark:bg-white/[0.03] rounded-xl border border-gray-200/60 dark:border-white/[0.08] text-sm focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-400 transition-all duration-200"
             />
           </label>

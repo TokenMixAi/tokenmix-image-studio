@@ -7,8 +7,10 @@ export interface AppSettings {
   timeout: number
 }
 
+const DEFAULT_BASE_URL = import.meta.env.VITE_DEFAULT_API_URL?.trim() || 'https://api.openai.com'
+
 export const DEFAULT_SETTINGS: AppSettings = {
-  baseUrl: 'https://api.openai.com',
+  baseUrl: DEFAULT_BASE_URL,
   apiKey: '',
   model: 'gpt-image-2',
   timeout: 300,
