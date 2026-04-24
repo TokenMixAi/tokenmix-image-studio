@@ -67,7 +67,9 @@ https://cooksleep.github.io/gpt_image_playground/
 
 ```bash
 # 使用项目官方镜像
-docker run -d -p 8080:80 ghcr.io/cooksleep/gpt_image_playground:latest
+docker run -d -p 8080:80 \
+  -e API_URL=https://api.openai.com \
+  ghcr.io/cooksleep/gpt_image_playground:latest
 ```
 
 浏览器访问 `http://localhost:8080`。
@@ -75,10 +77,11 @@ docker run -d -p 8080:80 ghcr.io/cooksleep/gpt_image_playground:latest
 也可以自行构建镜像：
 
 ```bash
-docker build -f deploy/Dockerfile -t gpt-image-playground \
-  --build-arg VITE_DEFAULT_API_URL=https://api.openai.com .
+docker build -f deploy/Dockerfile -t gpt-image-playground .
 
-docker run -d -p 8080:80 gpt-image-playground
+docker run -d -p 8080:80 \
+  -e API_URL=https://api.openai.com \
+  gpt-image-playground
 ```
 
 也可以使用 `docker compose`：
@@ -87,6 +90,8 @@ docker run -d -p 8080:80 gpt-image-playground
 services:
   gpt-image-playground:
     image: ghcr.io/cooksleep/gpt_image_playground:latest
+    environment:
+      - API_URL=https://api.openai.com
     ports:
       - "8080:80"
     restart: unless-stopped

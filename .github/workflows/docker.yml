@@ -37,7 +37,5 @@ jobs:
           context: .
           file: deploy/Dockerfile
           push: true
-          build-args: |
-            VITE_DEFAULT_API_URL=https://api.openai.com
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
