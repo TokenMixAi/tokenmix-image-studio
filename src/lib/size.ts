@@ -30,6 +30,23 @@ export function parseRatio(ratio: string) {
   return { width, height }
 }
 
+export function formatImageRatio(width: number, height: number) {
+  const roundedWidth = Math.round(width)
+  const roundedHeight = Math.round(height)
+  if (
+    !Number.isFinite(roundedWidth) ||
+    !Number.isFinite(roundedHeight) ||
+    roundedWidth <= 0 ||
+    roundedHeight <= 0
+  ) {
+    return ''
+  }
+
+  const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b)
+  const divisor = gcd(roundedWidth, roundedHeight)
+  return `${roundedWidth / divisor}:${roundedHeight / divisor}`
+}
+
 export function calculateImageSize(tier: SizeTier, ratio: string) {
   const parsed = parseRatio(ratio)
   if (!parsed) return null

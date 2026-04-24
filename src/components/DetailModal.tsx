@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+import { formatImageRatio } from '../lib/size'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -12,6 +13,8 @@ export default function DetailModal() {
 
   const [imageIndex, setImageIndex] = useState(0)
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
+  const [imageRatios, setImageRatios] = useState<Record<string, string>>({})
+  const [imageSizes, setImageSizes] = useState<Record<string, string>>({})
 
   const task = useMemo(
     () => tasks.find((t) => t.id === detailTaskId) ?? null,
@@ -41,9 +44,48 @@ export default function DetailModal() {
     }
   }, [task])
 
+  const currentOutputImageId = task?.outputImages?.[imageIndex] || ''
+  const currentOutputImageSrc = currentOutputImageId ? imageSrcs[currentOutputImageId] || '' : ''
+
+  useEffect(() => {
+    if (!currentOutputImageId || !currentOutputImageSrc) return
+
+    let cancelled = false
+    const image = new Image()
+    image.onload = () => {
+      if (!cancelled && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        setImageRatios((prev) => ({
+          ...prev,
+          [currentOutputImageId]: formatImageRatio(image.naturalWidth, image.naturalHeight),
+        }))
+        setImageSizes((prev) => ({
+          ...prev,
+          [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
+        }))
+      }
+    }
+    image.src = currentOutputImageSrc
+    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setImageRatios((prev) => ({
+        ...prev,
+        [currentOutputImageId]: formatImageRatio(image.naturalWidth, image.naturalHeight),
+      }))
+      setImageSizes((prev) => ({
+        ...prev,
+        [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
+      }))
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentOutputImageId, currentOutputImageSrc])
+
   if (!task) return null
 
   const outputLen = task.outputImages?.length || 0
+  const currentImageRatio = currentOutputImageId ? imageRatios[currentOutputImageId] : ''
+  const currentImageSize = currentOutputImageId ? imageSizes[currentOutputImageId] : ''
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -102,13 +144,34 @@ export default function DetailModal() {
           {task.status === 'done' && outputLen > 0 && (
             <>
               <img
-                src={imageSrcs[task.outputImages[imageIndex]] || ''}
+                src={currentOutputImageSrc}
                 className="max-w-full max-h-full object-contain cursor-pointer p-4"
                 onClick={() =>
                   setLightboxImageId(task.outputImages[imageIndex], task.outputImages)
                 }
                 alt=""
               />
+              <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                {currentImageRatio && currentImageSize ? (
+                  <>
+                    <span className="bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
+                      {currentImageRatio}
+                    </span>
+                    <span className="bg-black/50 text-white/90 text-xs px-2 py-0.5 rounded backdrop-blur-sm font-medium">
+                      {currentImageSize}
+                    </span>
+                  </>
+                ) : (
+                  formatDuration() && (
+                    <span className="flex items-center gap-1 bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {formatDuration()}
+                    </span>
+                  )
+                )}
+              </div>
               {outputLen > 1 && (
                 <>
                   <button
