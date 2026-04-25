@@ -58,9 +58,23 @@
 
 ## 🚀 部署与使用
 
-支持多种部署与使用方式，推荐使用 Docker 进行一键部署。
+支持多种部署与使用方式，推荐使用 Vercel 一键部署。
 
-### 🐳 方式一：Docker 部署 (推荐)
+### ▲ 方式一：Vercel 一键部署 (推荐)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FCookSleep%2Fgpt_image_playground&project-name=gpt-image-playground&repository-name=gpt-image-playground)
+
+点击上方按钮后，按 Vercel 页面提示导入仓库即可。项目已包含 `vercel.json`，Vercel 会自动执行 `npm install`、`npm run build`，并将 `dist/` 作为静态输出目录。
+
+如需预置默认 API 节点，可在 Vercel 项目的 **Settings → Environment Variables** 中添加：
+
+```bash
+VITE_DEFAULT_API_URL=https://api.openai.com
+```
+
+部署完成后，打开 Vercel 分配的域名，在页面右上角设置中填入 API Key 即可使用。
+
+### 🐳 方式二：Docker 部署
 
 项目已将镜像发布至 GitHub Container Registry。你可以通过环境变量 `API_URL` 注入默认的 API 节点。
 
@@ -89,7 +103,7 @@ services:
 
 *(注：官方镜像同时提供带版本号的标签，如 `0.1.11` 或 `0.1`)*
 
-### 🌐 方式二：GitHub Pages 自动部署
+### 🌐 方式三：GitHub Pages 自动部署
 
 本项目内置了 GitHub Actions 工作流。当你将本项目 Fork 到自己的仓库后，只需推送打上 `v*` 标签的代码，即可自动触发部署。
 
@@ -102,7 +116,7 @@ services:
    ```
 4. 等待 Action 运行完毕，即可访问你的专属 GitHub Pages。
 
-### 💻 方式三：本地开发与自行构建
+### 💻 方式四：本地开发与自行构建
 
 1. **环境准备 (可选)**
    你可以在项目根目录新建 `.env.local` 文件，配置构建时的默认 API URL：
