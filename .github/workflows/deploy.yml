@@ -1,4 +1,4 @@
-name: Deploy GitHub Pages Redirect
+name: Deploy to GitHub Pages
 
 on:
   workflow_dispatch:
@@ -13,32 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  redirect:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Create redirect page
-        run: |
-          mkdir -p dist
-          cat > dist/index.html <<'EOF'
-          <!doctype html>
-          <html lang="zh-CN">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <meta http-equiv="refresh" content="0; url=https://gpt-image-playground.cooksleep.dev" />
-              <link rel="canonical" href="https://gpt-image-playground.cooksleep.dev" />
-              <title>GPT Image Playground</title>
-            </head>
-            <body></body>
-          </html>
-          EOF
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
-    needs: redirect
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
