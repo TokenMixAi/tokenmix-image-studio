@@ -29,9 +29,7 @@ jobs:
               <link rel="canonical" href="https://gpt-image-playground.cooksleep.dev" />
               <title>GPT Image Playground</title>
             </head>
-            <body>
-              <p>正在跳转到 <a href="https://gpt-image-playground.cooksleep.dev">https://gpt-image-playground.cooksleep.dev</a></p>
-            </body>
+            <body></body>
           </html>
           EOF
 
