@@ -110,6 +110,7 @@ export default function DetailModal() {
   const currentActualParams = currentOutputImageId ? task.actualParamsByImage?.[currentOutputImageId] : undefined
   const currentRevisedPrompt = currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
   const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== task.prompt.trim())
+  const showPromptWarning = Boolean(currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt))
   const aggregateActualParams = outputLen > 0 ? { ...task.actualParams, n: outputLen } : task.actualParams
 
   const formatTime = (ts: number | null) => {
@@ -169,7 +170,10 @@ export default function DetailModal() {
   }
 
   const handleShowPromptWarning = () => {
-    showCodexCliPrompt(true)
+    showCodexCliPrompt(
+      true,
+      currentRevisedPrompt ? '接口返回的提示词已被改写' : '接口没有返回官方 API 会返回的部分信息',
+    )
   }
 
   const handleCopyInputImage = async () => {
@@ -349,7 +353,7 @@ export default function DetailModal() {
                   </svg>
                 </button>
               )}
-              {showRevisedPrompt && (
+              {showPromptWarning && (
                 <span className="relative inline-flex">
                   <button
                     type="button"
