@@ -108,10 +108,19 @@ VITE_DEFAULT_API_URL=https://api.openai.com/v1
 
 **更新说明：**
 
-- 如果你是通过一键按钮部署，Vercel 通常会为你创建一份自己的 Git 仓库，并从该仓库自动部署。
-- 后续想更新到本项目最新版时，请先将你的仓库同步到本仓库最新代码，再让 Vercel 重新部署。
-- 如果你的仓库是 Fork，可以在 GitHub 仓库页面点击 **Sync fork** 同步；同步后，Vercel 会按你的项目设置自动部署。
-- 如果你关闭了 Vercel 自动部署，也可以在 Vercel 项目的 **Deployments** 页面手动 Redeploy 最新提交。
+本仓库已在 `vercel.json` 中关闭了 Vercel 的默认自动部署（防止日常提交和别人 PR 产生部署报错噪音）。
+
+**如果你希望在同步了新的代码后自动让 Vercel 部署最新版**，请进行以下简单配置：
+
+1. 打开你的 Vercel 项目设置：**Settings** -> **Git**。
+2. 找到 **Deploy Hooks** 区域，起个名字（如 `Release`），Branch 填 `main`，然后点击 **Create Hook**。
+3. 复制生成的专属 URL（形如 `https://api.vercel.com/v1/integrations/deploy/...`）。
+4. 打开你 Fork 的 GitHub 仓库设置：**Settings** -> **Secrets and variables** -> **Actions**。
+5. 点击 **New repository secret**，名称填 `VERCEL_DEPLOY_HOOK`，值粘贴你刚才复制的 URL，然后保存。
+
+配置完成后，当你每次在 GitHub 页面点击 **Sync fork** 同步了上游最新的版本 Tag 时，仓库里的 GitHub Action 就会自动帮你触发 Vercel 进行构建和部署。
+
+*如果你不配置这个 Secret，项目将不会自动部署。你需要每次在 GitHub 页面点击 **Sync fork** 后，手动在 Vercel 项目的 **Deployments** 页面点击 Redeploy 来更新。*
 
 </details>
 
