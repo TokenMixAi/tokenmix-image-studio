@@ -5,6 +5,7 @@ import { callImageApi } from './api'
 describe('callImageApi', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it('records actual params returned on Images API responses in Codex CLI mode', async () => {
@@ -68,5 +69,59 @@ describe('callImageApi', () => {
       output_format: 'png',
       size: '1033x1522',
     }])
+  })
+
+  it('uses the same-origin API proxy path when API proxy is enabled', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      data: [{ b64_json: 'aW1hZ2U=' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiProxy: true,
+        baseUrl: 'http://api.example.com/v1',
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api-proxy/images/generations',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      data: [{ b64_json: 'aW1hZ2U=' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiProxy: true,
+        baseUrl: 'http://api.example.com/v1',
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.example.com/v1/images/generations',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 })
