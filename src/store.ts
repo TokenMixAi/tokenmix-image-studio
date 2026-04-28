@@ -47,6 +47,16 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
   return undefined
 }
 
+function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: string | null | undefined) {
+  if (!maskTargetImageId) return images
+  const maskIdx = images.findIndex((img) => img.id === maskTargetImageId)
+  if (maskIdx <= 0) return images
+  const next = [...images]
+  const [maskImage] = next.splice(maskIdx, 1)
+  next.unshift(maskImage)
+  return next
+}
+
 // ===== Store 类型 =====
 
 interface AppState {
@@ -64,6 +74,7 @@ interface AppState {
   removeInputImage: (idx: number) => void
   clearInputImages: () => void
   setInputImages: (imgs: InputImage[]) => void
+  moveInputImage: (fromIdx: number, toIdx: number) => void
   maskDraft: MaskDraft | null
   setMaskDraft: (draft: MaskDraft | null) => void
   clearMaskDraft: () => void
@@ -167,15 +178,34 @@ export const useStore = create<AppState>()(
         }),
       setInputImages: (imgs) =>
         set((s) => {
+          const inputImages = orderImagesWithMaskFirst(imgs, s.maskDraft?.targetImageId)
           const shouldClearMask =
-            Boolean(s.maskDraft) && !imgs.some((img) => img.id === s.maskDraft?.targetImageId)
+            Boolean(s.maskDraft) && !inputImages.some((img) => img.id === s.maskDraft?.targetImageId)
           return {
-            inputImages: imgs,
+            inputImages,
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           }
         }),
+      moveInputImage: (fromIdx, toIdx) =>
+        set((s) => {
+          const images = [...s.inputImages]
+          if (fromIdx < 0 || fromIdx >= images.length) return s
+          const maskTargetImageId = s.maskDraft?.targetImageId
+          if (maskTargetImageId && images[fromIdx]?.id === maskTargetImageId) return s
+          const minTargetIdx = maskTargetImageId && images.some((img) => img.id === maskTargetImageId) ? 1 : 0
+          const targetIdx = Math.max(minTargetIdx, Math.min(images.length, toIdx))
+          const insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx
+          if (insertIdx === fromIdx) return s
+          const [moved] = images.splice(fromIdx, 1)
+          images.splice(insertIdx, 0, moved)
+          return { inputImages: images }
+        }),
       maskDraft: null,
-      setMaskDraft: (maskDraft) => set({ maskDraft }),
+      setMaskDraft: (maskDraft) =>
+        set((s) => ({
+          maskDraft,
+          inputImages: orderImagesWithMaskFirst(s.inputImages, maskDraft?.targetImageId),
+        })),
       clearMaskDraft: () => set({ maskDraft: null }),
       maskEditorImageId: null,
       setMaskEditorImageId: (maskEditorImageId) => set({ maskEditorImageId }),
@@ -525,10 +555,9 @@ export async function reuseConfig(task: TaskRecord) {
 
 /** 编辑输出：将输出图加入输入 */
 export async function editOutputs(task: TaskRecord) {
-  const { inputImages, addInputImage, clearMaskDraft, showToast } = useStore.getState()
+  const { inputImages, addInputImage, showToast } = useStore.getState()
   if (!task.outputImages?.length) return
 
-  clearMaskDraft()
   let added = 0
   for (const imgId of task.outputImages) {
     if (inputImages.find((i) => i.id === imgId)) continue

@@ -76,7 +76,7 @@ export default function SettingsModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+    <div data-no-drag-select className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-overlay-in"
         onClick={handleClose}
@@ -144,7 +144,7 @@ export default function SettingsModal() {
                   placeholder={DEFAULT_SETTINGS.baseUrl}
                   className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 />
-                <div className="mt-1 min-h-[22px] flex items-center text-[10px] text-gray-400 dark:text-gray-500">
+                <div data-selectable-text className="mt-1 min-h-[22px] flex items-center text-[10px] text-gray-400 dark:text-gray-500">
                   {apiProxyEnabled ? (
                     <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
                   ) : (
@@ -172,8 +172,8 @@ export default function SettingsModal() {
                       <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow transition-transform ${draft.apiProxy ? 'translate-x-[11px]' : 'translate-x-[2px]'}`} />
                     </button>
                   </div>
-                  <div className="text-[10px] text-gray-400 dark:text-gray-500">
-                    由当前部署提供同源代理；开启后 API URL 设置会被忽略。
+                  <div data-selectable-text className="text-[10px] text-gray-400 dark:text-gray-500">
+                    由当前部署提供同源代理，用于解决浏览器跨域限制；开启后 API URL 设置会被忽略。
                   </div>
                 </div>
               )}
@@ -210,7 +210,7 @@ export default function SettingsModal() {
                     )}
                   </button>
                 </div>
-                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                <div data-selectable-text className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
                   支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
                 </div>
               </div>
@@ -235,7 +235,7 @@ export default function SettingsModal() {
                   ]}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
-                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                <div data-selectable-text className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
                   支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=images</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=responses</code>。
                 </div>
               </label>
@@ -252,7 +252,7 @@ export default function SettingsModal() {
                   placeholder={getDefaultModelForMode(draft.apiMode ?? DEFAULT_SETTINGS.apiMode)}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
-                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                <div data-selectable-text className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
                   {(draft.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
                     <>Responses API 需要使用支持 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code> 工具的文本模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_RESPONSES_MODEL}</code>。</>
                   ) : (

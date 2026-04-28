@@ -99,6 +99,7 @@ describe('callImageApi', () => {
   })
 
   it('ignores stored API proxy settings when the current deployment has no proxy', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       data: [{ b64_json: 'aW1hZ2U=' }],
     }), {
