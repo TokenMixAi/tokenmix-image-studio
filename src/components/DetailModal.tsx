@@ -300,7 +300,7 @@ export default function DetailModal() {
                 }
                 alt=""
               />
-              <div className="absolute top-[15px] flex items-center gap-1.5" style={{ left: imageLabelLeft }}>
+              <div data-selectable-text className="absolute top-[15px] flex items-center gap-1.5" style={{ left: imageLabelLeft }}>
                 {currentImageRatio && currentImageSize ? (
                   <>
                     <span className="bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
@@ -409,7 +409,7 @@ export default function DetailModal() {
             </svg>
           </button>
 
-          <div className="flex-1">
+          <div data-selectable-text className="flex-1">
             <div className="flex items-center gap-1.5 mb-2">
               <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                 输入内容
