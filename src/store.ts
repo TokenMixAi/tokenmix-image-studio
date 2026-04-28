@@ -307,6 +307,14 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
   })
 }
 
+function normalizeParamsForSettings(params: TaskParams, settings: AppSettings): TaskParams {
+  return {
+    ...params,
+    size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
+    quality: settings.codexCli ? DEFAULT_PARAMS.quality : params.quality,
+  }
+}
+
 /** 初始化：从 IndexedDB 加载任务和图片缓存，清理孤立图片 */
 export async function initStore() {
   const tasks = await getAllTasks()
@@ -384,11 +392,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     await storeImage(img.dataUrl)
   }
 
-  const normalizedParams = {
-    ...params,
-    size: normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
-    quality: settings.codexCli ? DEFAULT_PARAMS.quality : params.quality,
-  }
+  const normalizedParams = normalizeParamsForSettings(params, settings)
   if (normalizedParams.size !== params.size || normalizedParams.quality !== params.quality) {
     useStore.getState().setParams({ size: normalizedParams.size, quality: normalizedParams.quality })
   }
@@ -522,18 +526,22 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
 
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
+  const { settings } = useStore.getState()
+  const normalizedParams = normalizeParamsForSettings(task.params, settings)
   const taskId = genId()
   const newTask: TaskRecord = {
-    ...task,
     id: taskId,
+    prompt: task.prompt,
+    params: normalizedParams,
+    inputImageIds: [...task.inputImageIds],
+    maskTargetImageId: task.maskTargetImageId ?? null,
+    maskImageId: task.maskImageId ?? null,
+    outputImages: [],
     status: 'running',
     error: null,
     createdAt: Date.now(),
     finishedAt: null,
     elapsed: null,
-    outputImages: [],
-    actualParamsByImage: undefined,
-    revisedPromptByImage: undefined,
   }
 
   const latestTasks = useStore.getState().tasks
