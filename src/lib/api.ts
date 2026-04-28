@@ -1,6 +1,6 @@
 import type { AppSettings, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
-import { buildApiUrl, readClientDevProxyConfig } from './devProxy'
+import { buildApiUrl, isApiProxyAvailable, readClientDevProxyConfig } from './devProxy'
 
 const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -283,6 +283,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = settings.apiProxy && isApiProxyAvailable(proxyConfig)
   const requestHeaders = createRequestHeaders(settings)
 
   const controller = new AbortController()
@@ -338,7 +339,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
         formData.append('mask', maskBlob, 'mask.png')
       }
 
-      response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig, settings.apiProxy), {
+      response = await fetch(buildApiUrl(settings.baseUrl, 'images/edits', proxyConfig, useApiProxy), {
         method: 'POST',
         headers: requestHeaders,
         cache: 'no-store',
@@ -365,7 +366,7 @@ async function callImagesApiSingle(opts: CallApiOptions): Promise<CallApiResult>
         body.n = params.n
       }
 
-      response = await fetch(buildApiUrl(settings.baseUrl, 'images/generations', proxyConfig, settings.apiProxy), {
+      response = await fetch(buildApiUrl(settings.baseUrl, 'images/generations', proxyConfig, useApiProxy), {
         method: 'POST',
         headers: {
           ...requestHeaders,
@@ -459,6 +460,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
   const { settings, prompt, params, inputImageDataUrls } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = settings.apiProxy && isApiProxyAvailable(proxyConfig)
   const requestHeaders = createRequestHeaders(settings)
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), settings.timeout * 1000)
@@ -480,7 +482,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions): Promise<CallAp
       tool_choice: 'required',
     }
 
-    const response = await fetch(buildApiUrl(settings.baseUrl, 'responses', proxyConfig, settings.apiProxy), {
+    const response = await fetch(buildApiUrl(settings.baseUrl, 'responses', proxyConfig, useApiProxy), {
       method: 'POST',
       headers: {
         ...requestHeaders,

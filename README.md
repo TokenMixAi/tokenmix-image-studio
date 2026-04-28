@@ -151,7 +151,11 @@ services:
     restart: unless-stopped
 ```
 
-浏览器访问 `http://localhost:8080`，在页面右上角设置中填入 API Key 即可使用。如果你的 API 节点没有放开浏览器跨域，可以在设置中开启 **API 代理**，由容器内 Nginx 将同源的 `/api-proxy/` 请求转发到 `API_URL`。
+浏览器访问 `http://localhost:8080`，在页面右上角设置中填入 API Key 即可使用。
+
+如果你的 API 节点没有放开浏览器跨域，可以用环境变量 `ENABLE_API_PROXY=true` 开启容器内 Nginx 代理。开启后，设置面板才会展示 **API 代理** 开关；用户启用该开关后，浏览器会请求同源的 `/api-proxy/`，由容器内 Nginx 转发到部署端配置的 `API_URL`。
+
+⚠️ **安全警告**：开启 `ENABLE_API_PROXY=true` 后，任何人都能将你的服务器作为代理来请求目标 API。虽然请求本身仍需携带有效的 API Key 才能成功，但这可能会消耗你的服务器带宽。如果目标 API 是内网服务或基于 IP 白名单免密访问，则存在被未经授权调用的风险。建议仅在本地开发或有访问控制（如 IP 白名单、前置认证机制等）的环境中开启此功能。
 
 如果使用 bridge 网络并修改了容器内 `PORT`，需要同步调整端口映射，例如 `PORT=28080` 时使用 `"8080:28080"`。使用 host 网络时不要配置 `ports`。
 
@@ -202,7 +206,7 @@ docker compose up -d
 
    这样浏览器看到的是同源请求，实际跨域请求发生在 Vite 开发服务器这一侧，从而绕开浏览器 CORS 限制。
 
-   注意：这个开发代理只在 `npm run dev` 启动的 Vite 开发服务器中生效。它不会打包进静态产物，也不会在 Vercel、GitHub Pages 或普通 Nginx 静态部署中生效。Docker 镜像内置了 Nginx 代理，其他线上部署需要自行提供等价的服务端转发。
+   注意：这个开发代理只在 `npm run dev` 启动的 Vite 开发服务器中生效。它不会打包进静态产物，也不会在 Vercel、GitHub Pages 或普通 Nginx 静态部署中生效。Docker 镜像内置了 Nginx 代理，可以通过环境变量 `ENABLE_API_PROXY=true` 开启（默认关闭）。
 
    先复制示例配置：
    ```bash

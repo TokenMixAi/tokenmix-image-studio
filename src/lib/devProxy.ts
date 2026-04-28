@@ -82,3 +82,7 @@ export function readClientDevProxyConfig(): DevProxyConfig | null {
     import.meta.env.DEV,
   )
 }
+
+export function isApiProxyAvailable(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {
+  return import.meta.env.VITE_API_PROXY_AVAILABLE === 'true' || Boolean(proxyConfig?.enabled)
+}
