@@ -520,6 +520,29 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   if (task) putTask(task)
 }
 
+/** 重试失败的任务：创建新任务并执行 */
+export async function retryTask(task: TaskRecord) {
+  const taskId = genId()
+  const newTask: TaskRecord = {
+    ...task,
+    id: taskId,
+    status: 'running',
+    error: null,
+    createdAt: Date.now(),
+    finishedAt: null,
+    elapsed: null,
+    outputImages: [],
+    actualParamsByImage: undefined,
+    revisedPromptByImage: undefined,
+  }
+
+  const latestTasks = useStore.getState().tasks
+  useStore.getState().setTasks([newTask, ...latestTasks])
+  await putTask(newTask)
+
+  executeTask(taskId)
+}
+
 /** 复用配置 */
 export async function reuseConfig(task: TaskRecord) {
   const { setPrompt, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast } = useStore.getState()
