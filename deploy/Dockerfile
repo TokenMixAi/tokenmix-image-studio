@@ -1,5 +1,5 @@
 # ---- Build stage ----
-FROM node:20-alpine AS build
+FROM --platform=$BUILDPLATFORM node:20-alpine AS build
 
 WORKDIR /app
 
@@ -19,8 +19,7 @@ ENV PORT=80
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
-COPY deploy/inject-api-url.sh /docker-entrypoint.d/40-inject-api-url.sh
-RUN chmod +x /docker-entrypoint.d/40-inject-api-url.sh
+COPY --chmod=755 deploy/inject-api-url.sh /docker-entrypoint.d/40-inject-api-url.sh
 
 EXPOSE 80
 
