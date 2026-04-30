@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
 import { normalizeBaseUrl } from './lib/api'
+import { useDockerBreakingChangeNotice } from './hooks/useDockerBreakingChangeNotice'
 import type { ApiMode } from './types'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
@@ -17,6 +18,7 @@ import ImageContextMenu from './components/ImageContextMenu'
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
+  useDockerBreakingChangeNotice()
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
