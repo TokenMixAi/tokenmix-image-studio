@@ -1,19 +1,18 @@
 # GPT Image Playground
 
-基于 OpenAI 图像生成接口的图片生成与编辑工具。提供简洁的 Web UI，支持文本生成图片、参考图编辑、可视化参数调节、历史记录管理与本地数据导入导出。
+基于 OpenAI 图像生成接口的图片生成与编辑工具。提供简洁精美的 Web UI，支持文本生图、参考图与遮罩编辑，数据纯本地化存储，带来流畅的历史记录与参数管理体验。
 
+> 若需调用非 HTTPS 的内网或本地 HTTP API，请使用 GitHub Pages 版本或自行部署，Vercel 部署的体验版绑定的 `.dev` 域名因安全策略通常要求接口必须为 HTTPS。
 
-> 如有调用非本地的 HTTP API 的需求，请使用 GitHub Pages 版本或自行部署，因为 `.dev` 域名要求页面本身及其加载的资源（的来源）均为 HTTPS。
-
-**Vercel 部署版本在线体验：** 
-https://gpt-image-playground.cooksleep.dev
-
-**GitHub Pages 部署版本在线体验：**
-https://cooksleep.github.io/gpt_image_playground
+[**🌐 Vercel 在线体验**](https://gpt-image-playground.cooksleep.dev) &nbsp;|&nbsp; [**🌐 GitHub Pages 在线体验**](https://cooksleep.github.io/gpt_image_playground)
 
 ---
 
-## 📸 示例截图
+## 📸 界面预览
+
+<details>
+<summary><b>点击展开截图展示</b></summary>
+<br>
 
 <div align="center">
   <b>桌面端主界面</b><br>
@@ -48,42 +47,29 @@ https://cooksleep.github.io/gpt_image_playground
   <img src="docs/images/example_mb_2.jpg" alt="移动端侧滑多选" width="420" />
 </div>
 
+</details>
+
 ---
 
-## ✨ 功能特性
+## ✨ 核心特性
 
-### 🎨 核心能力
-- **文本生图**：输入提示词，可调用 `images/generations` 或 Responses API 的 `image_generation` 工具生成图片。
-- **参考图编辑**：支持上传最多 16 张参考图，可调用 `images/edits` 或 Responses API 多模态输入进行图片编辑。支持文件选择、粘贴和拖拽三种方式。
-- **遮罩编辑**：支持在参考图上绘制遮罩后进行局部编辑。遮罩主图会按官方接口限制预处理为安全工作图，避免高分辨率图片导致提交失败。需要注意的是，根据官方文档说明，遮罩编辑仍基于提示词引导模型，无法完全控制模型实际编辑区域。
-- **接口模式切换**：支持在设置中选择 Images API (`/v1/images`) 或 Responses API (`/v1/responses`)。
-- **批量生成**：单次可设置生成多张图片。
-- **Codex CLI 兼容模式**：可在设置中开启 Codex CLI 模式。开启后根据 Codex CLI 中的实际可用能力，将质量参数固定为 `auto` 且不会发送 `quality` 字段；Images API 的多图生成会拆分为多个并发请求完成，解决该 API 数量参数无效的问题；提示词文本开头会加入简短的不改写要求，避免模型重写提示词，偏离原意。
+### 🎨 强大的图像生成与编辑
+- **双模接口支持**：自由切换使用常规 `Images API` (`/v1/images`) 或 `Responses API` (`/v1/responses`)。
+- **参考图与遮罩**：支持上传最多 16 张参考图（支持剪贴板和拖拽）。内置可视化遮罩编辑器，自动预处理以符合官方分辨率限制。
+- **批量与迭代**：支持单次多图生成；一键将满意结果转为参考图，无缝开启下一轮修改。
 
-### ⚙️ 精细化参数控制
-- **智能尺寸选择器**：支持 `auto`、按 `1K / 2K / 4K` 结合常用比例自动计算分辨率，同时也支持手动输入自定义宽高。
-- **自动规整**：为了兼容模型限制，自定义尺寸会自动规整到合法范围：宽高均为 16 的倍数，最大边长 `3840px`，宽高比不超过 `3:1`，总像素限制为 `655360` 到 `8294400`。
-- **预设反推**：打开尺寸选择弹窗时，会自动根据当前尺寸匹配对应的预设比例。
-- **其他选项**：支持调整质量 (`low`, `medium`, `high`)、输出格式 (`PNG`, `JPEG`, `WebP`)、压缩率 (0-100) 以及审核强度。
-- **实际参数追踪**：会记录 API 返回的实际尺寸、质量、格式、数量与改写提示词，并在与请求值不一致时高亮展示。
+### ⚙️ 精细化参数追踪
+- **智能尺寸控制**：提供 1K/2K/4K 快速预设，自定义宽高时会自动规整至模型安全范围（16 的倍数、总像素校验等）。
+- **实际参数对比**：自动提取 API 响应中真实生效的尺寸、质量、耗时以及**模型改写后的提示词**，与你的请求参数高亮对比。
 
-### 📁 历史记录与工作流
-- **瀑布流任务卡片**：直观展示生成缩略图、提示词、参数和耗时。支持按状态筛选与关键词搜索。
-- **收藏与筛选**：支持收藏常用记录，并可一键只看收藏内容。
-- **多选批量操作**：桌面端支持拖拽框选和 Ctrl/⌘ 点击多选，移动端支持左右侧滑选择；选中后可批量收藏、删除或全选当前可见记录。
-- **快速复用**：一键将历史记录的配置与提示词回填到输入框。
-- **迭代生成**：支持将生成的输出结果直接添加到参考图列表中，进行下一轮迭代编辑。
-- **画廊与详情**：点击任务卡片可查看完整输入输出，支持大图浏览。
-- **快捷操作**：支持图片右键或移动端长按唤出自定义菜单，快速复制、下载图片，或将图片加入参考图后继续编辑。
+### 📁 高效历史管理 (纯本地)
+- **瀑布流与画廊**：历史任务自动保存，支持按状态过滤、全屏大图预览与快捷下载。
+- **快捷批量操作**：桌面端支持鼠标拖拽框选、Ctrl/⌘ 连选，移动端支持顺滑侧滑多选；轻松实现批量收藏与清理。
+- **极致性能与隐私**：所有记录与图片均存放在浏览器 IndexedDB 中（采用 SHA-256 去重压缩），不经过任何第三方服务器。支持一键打包导出 ZIP 备份。
 
-### 📱 体验优化
-- **响应式布局**：桌面端提供更高效的批量选择与底部输入栏，移动端输入栏可折叠，并针对侧滑、多选和弹窗交互做了适配。
-- **PWA 支持**：支持渐进式 Web 应用（PWA），可将网页作为独立应用安装到桌面或移动设备主屏幕，提供类似原生 App 的沉浸式体验，并适配 iOS PWA 顶部安全区。
-
-### 💾 本地数据优先
-- **IndexedDB 存储**：所有任务记录与图片数据均存储在浏览器的 IndexedDB 中，数据绝不离开本地。
-- **性能优化**：参考图采用内存缓存与延迟存储机制，图片采用 SHA-256 哈希自动去重，并在每次启动时自动清理孤立的图片碎片。
-- **导入与导出**：支持将完整数据打包为 ZIP 导出。导出的 ZIP 内包含原始图片文件（非 base64）和记录图片元数据的 `manifest.json`，方便备份与迁移。
+### 🔌 API 兼容增强
+- **Codex CLI 兼容模式**：专为非标准 API (如 Codex CLI) 打造。开启后自动固定无效参数，将 Images API 的多图请求拆分为并发单图。
+- **提示词防改写**：Responses API 会始终在请求文本前加入强制指令防止提示词被改写；开启 Codex CLI 模式后，Images API 也会获得同等保护。
 
 ---
 
@@ -255,16 +241,16 @@ docker compose up -d
 
 ---
 
-## 🛠️ API 配置说明
+## 🛠️ API 配置与 URL 传参
 
-点击页面右上角的设置图标，你可以随时更改 API 相关的配置。
+点击页面右上角的 **设置 (⚙️)**，可以配置模型与密钥。
 
 - **Images API**：调用 `/v1/images/generations` 和 `/v1/images/edits`，模型需要填写 GPT Image 模型，例如 `gpt-image-2`。
-- **Responses API**：调用 `/v1/responses` 并使用 `image_generation` 工具，模型需要填写支持该工具的文本模型，例如 `gpt-5.5`。
+- **Responses API**：调用 `/v1/responses` 并使用 `image_generation` 工具，模型需要填写支持该工具的文本模型，例如 `gpt-5.5`。请求文本会始终加入简短的不改写要求，避免模型重写提示词，偏离原意。
 - **API 代理**：开启后，浏览器会请求同源的 `/api-proxy/` 路径，再由当前后端转发到真实 API，用于绕开浏览器 CORS 限制。代理目标由部署端配置决定，例如 Docker 中的 `API_URL` 或本地开发的 `dev-proxy.config.json`。
-- **Codex CLI 模式**：如果你在使用源于 Codex CLI 的 API，可以在 `API URL` 右侧开启该模式。开启后应用不会向任何接口发送 `quality` 参数，界面中的质量选项也会固定为 `auto`；同时会在提示词文本开头加入简短的不改写要求，避免模型重写提示词，偏离原意。
+- **Codex CLI 模式**：如果你在使用源于 Codex CLI 的 API，可以在 `API URL` 右侧开启该模式。开启后应用不会向任何接口发送 `quality` 参数，界面中的质量选项也会固定为 `auto`；使用 Images API 时，还会在提示词文本开头加入简短的不改写要求。
 - Codex CLI 模式下，Images API 的图片数量会通过并发发起多个单图请求实现；Responses API 原本也通过并发请求实现多图生成。
-- 如果检测到接口返回的提示词被改写，应用会提示是否为当前 `API URL + API Key` 组合开启 Codex CLI 模式；取消后，同一组合不再重复询问。
+- 如果检测到接口返回的提示词被改写，或缺少官方 API 通常会返回的部分信息，应用会提示是否为当前 `API URL + API Key` 组合开启 Codex CLI 模式；取消后，同一组合不再重复询问。
 
 应用支持通过 URL 查询参数快速填充配置，非常适合书签或分享给他人使用：
 - `?apiUrl=https://你的代理地址.com`
@@ -274,11 +260,11 @@ docker compose up -d
 
 例如：
 - 接入 New API 聊天应用：
-  ```
+  ```text
   https://gpt-image-playground.cooksleep.dev?apiUrl={address}&apiKey={key}
   ```
 
-  ```
+  ```text
   https://cooksleep.github.io/gpt_image_playground?apiUrl={address}&apiKey={key}
   ```
 
@@ -286,16 +272,17 @@ docker compose up -d
 
 ## 💻 技术栈
 
-- **框架**：[React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
+- **前端框架**：[React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
 - **构建工具**：[Vite](https://vite.dev/)
-- **样式**：[Tailwind CSS 3](https://tailwindcss.com/)
+- **样式方案**：[Tailwind CSS 3](https://tailwindcss.com/)
 - **状态管理**：[Zustand](https://zustand.docs.pmnd.rs/)
-- **数据存储**：浏览器的 IndexedDB API
 
-## 📄 许可证
+## 📄 许可证 & 致谢
 
-[MIT License](LICENSE)
+本项目基于 [MIT License](LICENSE) 开源。
 
-## 🔗 致谢
+特别致谢：[LINUX DO](https://linux.do)
 
-[LINUX DO](https://linux.do)
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=CookSleep/gpt_image_playground&type=Date)](https://www.star-history.com/#CookSleep/gpt_image_playground&Date)
