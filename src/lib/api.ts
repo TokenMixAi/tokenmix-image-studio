@@ -1,14 +1,14 @@
-import { getActiveApiProfile } from '../types'
-import { callFalImageApi } from './falImageApi'
-import { callOaiLikeImageApi } from './oaiImageApi'
-import type { CallApiOptions, CallApiResult } from './apiShared'
+import { getActiveApiProfile } from './apiProfiles'
+import { callFalAiImageApi } from './falAiImageApi'
+import { callOpenAICompatibleImageApi } from './openaiCompatibleImageApi'
+import type { CallApiOptions, CallApiResult } from './imageApiShared'
 
-export type { CallApiOptions, CallApiResult } from './apiShared'
+export type { CallApiOptions, CallApiResult } from './imageApiShared'
 export { normalizeBaseUrl } from './devProxy'
 
 export async function callImageApi(opts: CallApiOptions): Promise<CallApiResult> {
   const profile = getActiveApiProfile(opts.settings)
-  if (profile.provider === 'fal') return callFalImageApi(opts, profile)
+  if (profile.provider === 'fal') return callFalAiImageApi(opts, profile)
 
-  return callOaiLikeImageApi(opts, profile)
+  return callOpenAICompatibleImageApi(opts, profile)
 }

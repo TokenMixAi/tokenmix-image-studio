@@ -13,48 +13,42 @@ import {
   mergeActualParams,
   MIME_MAP,
   normalizeBase64Image,
-} from './apiShared'
+} from './imageApiShared'
+
+const DEFAULT_FAL_IMAGE_SIZE = { width: 1360, height: 1024 }
 
 function mapFalEndpoint(model: string, isEdit: boolean): string {
   const normalized = model.trim().replace(/^\/+/, '').replace(/\/+$/, '') || 'openai/gpt-image-2'
   return isEdit && !normalized.endsWith('/edit') ? `${normalized}/edit` : normalized
 }
 
-async function mapFalImageSize(size: string, isEdit: boolean): Promise<string | { width: number; height: number }> {
-  if (isEdit && size === 'auto') return 'auto'
-  if (size === '1024x1024') return 'square'
-  if (size === '1536x1024') return 'landscape_4_3'
-  if (size === '1024x1536') return 'portrait_4_3'
-  if (
-    size === 'square_hd' ||
-    size === 'square' ||
-    size === 'portrait_4_3' ||
-    size === 'portrait_16_9' ||
-    size === 'landscape_4_3' ||
-    size === 'landscape_16_9'
-  ) {
-    return size
-  }
-
+async function mapFalImageSize(size: string): Promise<{ width: number; height: number }> {
   const match = size.match(/^(\d+)x(\d+)$/)
   if (match) {
     return { width: Number(match[1]), height: Number(match[2]) }
   }
 
-  return 'landscape_4_3'
+  return DEFAULT_FAL_IMAGE_SIZE
 }
 
 function mapFalQuality(quality: TaskParams['quality']): 'low' | 'medium' | 'high' {
   return quality === 'auto' ? 'high' : quality
 }
 
+function configureFal(profile: ApiProfile) {
+  fal.config({
+    credentials: profile.apiKey,
+    suppressLocalCredentialsWarning: true,
+  })
+}
+
 async function createFalRequestInput(opts: CallApiOptions): Promise<Record<string, unknown>> {
   const isEdit = opts.inputImageDataUrls.length > 0
   const input: Record<string, unknown> = {
     prompt: opts.prompt,
-    image_size: await mapFalImageSize(opts.params.size, isEdit),
+    image_size: await mapFalImageSize(opts.params.size),
     quality: mapFalQuality(opts.params.quality),
-    num_images: Math.max(1, opts.params.n || 1),
+    num_images: Math.min(4, Math.max(1, opts.params.n || 1)),
     output_format: opts.params.output_format,
   }
 
@@ -84,7 +78,7 @@ function readFalImageValue(value: unknown, fallbackMime: string): string | null 
   return null
 }
 
-async function parseFalImages(payload: FalApiResponse, fallbackMime: string, signal: AbortSignal): Promise<string[]> {
+async function parseFalImages(payload: FalApiResponse, fallbackMime: string, signal?: AbortSignal): Promise<string[]> {
   const candidates: unknown[] = []
   if (Array.isArray(payload.images)) candidates.push(...payload.images)
   if (payload.image) candidates.push(payload.image)
@@ -101,10 +95,58 @@ async function parseFalImages(payload: FalApiResponse, fallbackMime: string, sig
   return images
 }
 
-export async function callFalImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+async function parseFalResult(payload: FalApiResponse, params: TaskParams, signal?: AbortSignal): Promise<CallApiResult> {
+  const mime = MIME_MAP[params.output_format] || 'image/png'
+  const images = await parseFalImages(payload, mime, signal)
+  return {
+    images,
+    revisedPrompts: images.map(() => undefined),
+  }
+}
+
+export function getFalErrorMessage(err: unknown): string | null {
+  const body = err && typeof err === 'object' && 'body' in err ? (err as { body?: unknown }).body : null
+  if (!body || typeof body !== 'object') return null
+
+  const detail = (body as Record<string, unknown>).detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object') {
+          const record = item as Record<string, unknown>
+          if (typeof record.msg === 'string' && record.msg.trim()) return record.msg
+          if (typeof record.message === 'string' && record.message.trim()) return record.message
+        }
+        return null
+      })
+      .filter((message): message is string => Boolean(message))
+    if (messages.length) return messages.join('\n')
+  }
+
+  const message = (body as Record<string, unknown>).message
+  return typeof message === 'string' && message.trim() ? message : null
+}
+
+export async function getFalQueueStatus(profile: ApiProfile, endpoint: string, requestId: string) {
+  configureFal(profile)
+  return fal.queue.status(endpoint, { requestId, logs: true })
+}
+
+export async function getFalQueuedImageResult(
+  profile: ApiProfile,
+  endpoint: string,
+  requestId: string,
+  params: TaskParams,
+): Promise<CallApiResult> {
+  configureFal(profile)
+  const result = await fal.queue.result(endpoint, { requestId })
+  return parseFalResult(result.data as FalApiResponse, params)
+}
+
+export async function callFalAiImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const mime = MIME_MAP[opts.params.output_format] || 'image/png'
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
 
   try {
     if (opts.maskDataUrl) {
@@ -116,26 +158,25 @@ export async function callFalImageApi(opts: CallApiOptions, profile: ApiProfile)
         (opts.maskDataUrl ? getDataUrlEncodedByteSize(opts.maskDataUrl) : 0),
     )
 
-    // 和 OAI-like 一样使用当前 Provider 保存的 API Key，避免 fal SDK 额外输出前端凭据警告。
-    fal.config({
-      credentials: profile.apiKey,
-      suppressLocalCredentialsWarning: true,
-    })
+    // 使用当前配置保存的 API Key，避免 fal SDK 额外输出前端凭据警告。
+    configureFal(profile)
 
     const isEdit = opts.inputImageDataUrls.length > 0
     const endpoint = mapFalEndpoint(profile.model, isEdit)
     const input = await createFalRequestInput(opts)
-    // fal 官方 SDK 已内置 submit/status/result 轮询，这里保留外层超时用于和其他供应商一致。
     const result = await fal.subscribe(endpoint, {
       input,
       logs: true,
-      abortSignal: controller.signal,
+      onEnqueue: (requestId) => {
+        opts.onFalRequestEnqueued?.({ requestId, endpoint })
+      },
     })
     const payload = result.data as FalApiResponse
-    const images = await parseFalImages(payload, mime, controller.signal)
-    const actualFalSize = await mapFalImageSize(opts.params.size, opts.inputImageDataUrls.length > 0)
+    opts.onFalRequestEnqueued?.({ requestId: result.requestId, endpoint })
+    const images = await parseFalImages(payload, mime)
+    const actualFalSize = await mapFalImageSize(opts.params.size)
     const actualParams = mergeActualParams({
-      size: typeof actualFalSize === 'string' ? actualFalSize : `${actualFalSize.width}x${actualFalSize.height}`,
+      size: `${actualFalSize.width}x${actualFalSize.height}`,
       quality: mapFalQuality(opts.params.quality),
       output_format: opts.params.output_format,
       n: images.length,
@@ -147,11 +188,8 @@ export async function callFalImageApi(opts: CallApiOptions, profile: ApiProfile)
       revisedPrompts: images.map(() => undefined),
     }
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('fal.ai 任务等待被浏览器中断。fal 后台任务可能仍会完成；如果 fal 控制台已有结果，请重新生成或稍后重试。')
-    }
+    const falMessage = getFalErrorMessage(err)
+    if (falMessage) throw new Error(falMessage)
     throw err
-  } finally {
-    clearTimeout(timeoutId)
   }
 }

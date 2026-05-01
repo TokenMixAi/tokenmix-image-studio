@@ -16,6 +16,7 @@ export interface CallApiOptions {
   /** 输入图片的 data URL 列表 */
   inputImageDataUrls: string[]
   maskDataUrl?: string
+  onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
 }
 
 export interface CallApiResult {
@@ -88,7 +89,7 @@ async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> 
   return `data:${blob.type || fallbackMime};base64,${btoa(binary)}`
 }
 
-export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, signal: AbortSignal): Promise<string> {
+export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, signal?: AbortSignal): Promise<string> {
   if (isDataUrl(url)) return url
 
   const response = await fetch(url, {
@@ -100,7 +101,8 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
     throw new Error(`图片 URL 下载失败：HTTP ${response.status}`)
   }
 
-  return blobToDataUrl(await response.blob(), fallbackMime)
+  const blob = await response.blob()
+  return blobToDataUrl(blob, fallbackMime)
 }
 
 export async function getApiErrorMessage(response: Response): Promise<string> {

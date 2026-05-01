@@ -16,7 +16,9 @@ import {
   MIME_MAP,
   normalizeBase64Image,
   pickActualParams,
-} from './apiShared'
+} from './imageApiShared'
+
+const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
 
 function createRequestHeaders(profile: ApiProfile): Record<string, string> {
   return {
@@ -57,7 +59,7 @@ function createResponsesImageTool(
 }
 
 function createResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
-  const text = `Use the following text as the complete prompt. Do not rewrite it:\n${prompt}`
+  const text = `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`
   if (!inputImageDataUrls.length) return text
 
   return [
@@ -106,7 +108,7 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
   return results
 }
 
-export async function callOaiLikeImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   return profile.apiMode === 'responses'
     ? callResponsesImageApi(opts, profile)
     : callImagesApi(opts, profile)
@@ -155,7 +157,7 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
 async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const { prompt: originalPrompt, params, inputImageDataUrls } = opts
   const prompt = profile.codexCli
-    ? `Use the following text as the complete prompt. Do not rewrite it:\n${originalPrompt}`
+    ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${originalPrompt}`
     : originalPrompt
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
