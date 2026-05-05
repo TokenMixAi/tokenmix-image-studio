@@ -11,12 +11,14 @@ import type {
 import { DEFAULT_PARAMS } from './types'
 import { DEFAULT_SETTINGS, getActiveApiProfile, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import {
+  CURRENT_THUMBNAIL_VERSION,
   getAllTasks,
   putTask,
   deleteTask as dbDeleteTask,
   clearTasks as dbClearTasks,
   getImage,
   getImageThumbnail,
+  getStoredFreshImageThumbnail,
   getAllImageIds,
   getAllImages,
   putImage,
@@ -36,11 +38,14 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 // 内存缓存，id → dataUrl。只保留少量最近使用图片，避免大量 4K data URL 常驻内存。
 
 const imageCache = new Map<string, string>()
-const thumbnailCache = new Map<string, { dataUrl: string; width?: number; height?: number }>()
-const thumbnailBackfillIds = new Set<string>()
+const thumbnailCache = new Map<string, { dataUrl: string; width?: number; height?: number; thumbnailVersion?: number }>()
+const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
+const thumbnailBackfillRunningIds = new Set<string>()
+const thumbnailSubscribers = new Map<string, Set<(thumbnail: { dataUrl: string; width?: number; height?: number }) => void>>()
 let thumbnailBackfillScheduled = false
 const MAX_IMAGE_CACHE_ENTRIES = 8
 const MAX_THUMBNAIL_CACHE_ENTRIES = 80
+const MAX_THUMBNAIL_BACKFILL_CONCURRENT = 4
 const FAL_RECOVERY_POLL_MS = 10_000
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -71,14 +76,19 @@ function cacheImage(id: string, dataUrl: string) {
 
 function getCachedThumbnail(id: string) {
   const thumbnail = thumbnailCache.get(id)
-  if (thumbnail) {
+  if (thumbnail?.thumbnailVersion === CURRENT_THUMBNAIL_VERSION) {
     thumbnailCache.delete(id)
     thumbnailCache.set(id, thumbnail)
+    return thumbnail
   }
-  return thumbnail
+  if (thumbnail) {
+    thumbnailCache.delete(id)
+  }
+  return undefined
 }
 
-function cacheThumbnail(id: string, thumbnail: { dataUrl: string; width?: number; height?: number }) {
+function cacheThumbnail(id: string, thumbnail: { dataUrl: string; width?: number; height?: number; thumbnailVersion?: number }) {
+  if (thumbnail.thumbnailVersion !== CURRENT_THUMBNAIL_VERSION) return
   thumbnailCache.delete(id)
   thumbnailCache.set(id, thumbnail)
   while (thumbnailCache.size > MAX_THUMBNAIL_CACHE_ENTRIES) {
@@ -103,24 +113,44 @@ export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl:
   const cached = getCachedThumbnail(id)
   if (cached) return cached
 
-  const rec = await getImageThumbnail(id)
+  const rec = await getStoredFreshImageThumbnail(id)
   if (!rec?.thumbnailDataUrl) {
-    const original = await ensureImageCached(id)
-    return original ? { dataUrl: original } : undefined
+    scheduleThumbnailBackfill([id], 'visible')
+    return undefined
   }
 
   const thumbnail = {
     dataUrl: rec.thumbnailDataUrl,
     width: rec.width,
     height: rec.height,
+    thumbnailVersion: rec.thumbnailVersion,
   }
   cacheThumbnail(id, thumbnail)
   return thumbnail
 }
 
-function scheduleThumbnailBackfill(ids: Iterable<string>) {
+export function subscribeImageThumbnail(id: string, callback: (thumbnail: { dataUrl: string; width?: number; height?: number }) => void) {
+  let subscribers = thumbnailSubscribers.get(id)
+  if (!subscribers) {
+    subscribers = new Set()
+    thumbnailSubscribers.set(id, subscribers)
+  }
+  subscribers.add(callback)
+  return () => {
+    subscribers?.delete(callback)
+    if (subscribers?.size === 0) thumbnailSubscribers.delete(id)
+  }
+}
+
+function notifyImageThumbnail(id: string, thumbnail: { dataUrl: string; width?: number; height?: number }) {
+  thumbnailSubscribers.get(id)?.forEach((callback) => callback(thumbnail))
+}
+
+function scheduleThumbnailBackfill(ids: Iterable<string>, priority: 'visible' | 'background' = 'background') {
   for (const id of ids) {
-    if (!thumbnailCache.has(id)) thumbnailBackfillIds.add(id)
+    if (getCachedThumbnail(id) || thumbnailBackfillRunningIds.has(id)) continue
+    const currentPriority = thumbnailBackfillIds.get(id)
+    if (!currentPriority || priority === 'visible') thumbnailBackfillIds.set(id, priority)
   }
   scheduleThumbnailBackfillTick()
 }
@@ -142,22 +172,77 @@ function scheduleThumbnailBackfillTick() {
 }
 
 async function processNextThumbnailBackfill() {
-  const id = thumbnailBackfillIds.values().next().value
-  if (!id) return
-  thumbnailBackfillIds.delete(id)
+  if (thumbnailBackfillRunningIds.size > 0) return
 
-  if (!thumbnailCache.has(id)) {
+  const ids = await getNextThumbnailBackfillBatch()
+  for (const id of ids) startThumbnailBackfill(id)
+
+  if (thumbnailBackfillIds.size > 0) scheduleThumbnailBackfillTick()
+}
+
+async function getNextThumbnailBackfillBatch() {
+  const candidates = getOrderedThumbnailBackfillIds().slice(0, MAX_THUMBNAIL_BACKFILL_CONCURRENT)
+  if (candidates.length === 0) return []
+
+  const sizes = await Promise.all(candidates.map(async (id) => {
+    const image = await getImage(id)
+    return { width: image?.width, height: image?.height }
+  }))
+  const concurrency = getThumbnailConcurrencyForBatch(sizes)
+  const selected = candidates.slice(0, concurrency)
+  for (const id of selected) thumbnailBackfillIds.delete(id)
+  return selected
+}
+
+function getOrderedThumbnailBackfillIds() {
+  const visible: string[] = []
+  const background: string[] = []
+  for (const [id, priority] of thumbnailBackfillIds) {
+    if (priority === 'visible') visible.push(id)
+    else background.push(id)
+  }
+  return [...visible, ...background]
+}
+
+function getThumbnailConcurrencyForBatch(sizes: Array<{ width?: number; height?: number }>) {
+  let maxMegapixels = 0
+  for (const { width, height } of sizes) {
+    if (!width || !height) return 1
+    maxMegapixels = Math.max(maxMegapixels, (width * height) / 1_000_000)
+  }
+  const megapixels = maxMegapixels
+  if (megapixels >= 8) return 1
+  if (megapixels >= 4) return 2
+  if (megapixels >= 2) return 3
+  return 4
+}
+
+function startThumbnailBackfill(id: string) {
+  thumbnailBackfillRunningIds.add(id)
+
+  void (async () => {
+    if (getCachedThumbnail(id)) return
+
     const thumbnail = await getImageThumbnail(id)
     if (thumbnail?.thumbnailDataUrl) {
       cacheThumbnail(id, {
         dataUrl: thumbnail.thumbnailDataUrl,
         width: thumbnail.width,
         height: thumbnail.height,
+        thumbnailVersion: thumbnail.thumbnailVersion,
+      })
+      notifyImageThumbnail(id, {
+        dataUrl: thumbnail.thumbnailDataUrl,
+        width: thumbnail.width,
+        height: thumbnail.height,
       })
     }
-  }
-
-  scheduleThumbnailBackfillTick()
+  })().catch(() => {
+    // Keep thumbnail generation best-effort; cards remain on placeholders if it fails.
+  }).finally(() => {
+    thumbnailBackfillRunningIds.delete(id)
+    scheduleThumbnailBackfillTick()
+  })
 }
 
 function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: string | null | undefined) {
@@ -1084,6 +1169,7 @@ export async function clearAllData() {
   await clearImages()
   imageCache.clear()
   thumbnailCache.clear()
+  thumbnailBackfillIds.clear()
   const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
   setTasks([])
   clearInputImages()
@@ -1145,23 +1231,33 @@ export async function exportData() {
       const { ext, bytes } = dataUrlToBytes(img.dataUrl)
       const path = `images/${img.id}.${ext}`
       const createdAt = img.createdAt ?? imageCreatedAtFallback.get(img.id) ?? exportedAt
-      imageFiles[img.id] = { path, createdAt, source: img.source }
+      imageFiles[img.id] = {
+        path,
+        createdAt,
+        source: img.source,
+        width: img.width,
+        height: img.height,
+      }
       zipFiles[path] = [bytes, { mtime: new Date(createdAt) }]
 
       const thumbnail = await getImageThumbnail(img.id)
       if (thumbnail?.thumbnailDataUrl) {
         const { ext: thumbnailExt, bytes: thumbnailBytes } = dataUrlToBytes(thumbnail.thumbnailDataUrl)
         const thumbnailPath = `thumbnails/${img.id}.${thumbnailExt}`
+        imageFiles[img.id].width = imageFiles[img.id].width ?? thumbnail.width
+        imageFiles[img.id].height = imageFiles[img.id].height ?? thumbnail.height
         thumbnailFiles[img.id] = {
           path: thumbnailPath,
           width: thumbnail.width,
           height: thumbnail.height,
+          thumbnailVersion: thumbnail.thumbnailVersion,
         }
         zipFiles[thumbnailPath] = [thumbnailBytes, { mtime: new Date(createdAt) }]
         cacheThumbnail(img.id, {
           dataUrl: thumbnail.thumbnailDataUrl,
           width: thumbnail.width,
           height: thumbnail.height,
+          thumbnailVersion: thumbnail.thumbnailVersion,
         })
       }
     }
@@ -1214,7 +1310,14 @@ export async function importData(file: File): Promise<boolean> {
       const bytes = unzipped[info.path]
       if (!bytes) continue
       const dataUrl = bytesToDataUrl(bytes, info.path)
-      await putImage({ id, dataUrl, createdAt: info.createdAt, source: info.source })
+      await putImage({
+        id,
+        dataUrl,
+        createdAt: info.createdAt,
+        source: info.source,
+        width: info.width,
+        height: info.height,
+      })
       cacheImage(id, dataUrl)
       importedImageIds.push(id)
     }
@@ -1228,11 +1331,13 @@ export async function importData(file: File): Promise<boolean> {
         thumbnailDataUrl,
         width: info.width,
         height: info.height,
+        thumbnailVersion: info.thumbnailVersion,
       })
       cacheThumbnail(id, {
         dataUrl: thumbnailDataUrl,
         width: info.width,
         height: info.height,
+        thumbnailVersion: info.thumbnailVersion,
       })
     }
 

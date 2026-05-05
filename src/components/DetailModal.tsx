@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, getCachedImage, ensureImageCached, ensureImageThumbnailCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
@@ -51,6 +51,9 @@ export default function DetailModal() {
   useEffect(() => {
     if (!task) {
       setImageSrcs({})
+      setOutputPreviewSrcs({})
+      setImageRatios({})
+      setImageSizes({})
       return
     }
 
@@ -85,33 +88,28 @@ export default function DetailModal() {
   const allInputImageIds = task?.inputImageIds ?? []
 
   useEffect(() => {
-    if (!currentOutputImageId) return
+    if (!currentOutputImageId) {
+      setOutputPreviewSrcs({})
+      return
+    }
 
     let cancelled = false
-    ensureImageThumbnailCached(currentOutputImageId)
-      .then((thumbnail) => {
-        if (cancelled || !thumbnail) return
-        setOutputPreviewSrcs((prev) => ({ ...prev, [currentOutputImageId]: thumbnail.dataUrl }))
-        const width = thumbnail.width
-        const height = thumbnail.height
-        if (width && height) {
-          setImageRatios((prev) => ({
-            ...prev,
-            [currentOutputImageId]: formatImageRatio(width, height),
-          }))
-          setImageSizes((prev) => ({
-            ...prev,
-            [currentOutputImageId]: `${width}×${height}`,
-          }))
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setOutputPreviewSrcs((prev) => {
-          const next = { ...prev }
-          delete next[currentOutputImageId]
-          return next
+    const setOutputImage = (dataUrl: string) => {
+      if (!cancelled) setOutputPreviewSrcs({ [currentOutputImageId]: dataUrl })
+    }
+
+    const cached = getCachedImage(currentOutputImageId)
+    if (cached) {
+      setOutputImage(cached)
+    } else {
+      ensureImageCached(currentOutputImageId)
+        .then((dataUrl) => {
+          if (dataUrl) setOutputImage(dataUrl)
         })
-      })
+        .catch(() => {
+          if (!cancelled) setOutputPreviewSrcs({})
+        })
+    }
 
     return () => {
       cancelled = true
@@ -303,6 +301,17 @@ export default function DetailModal() {
                   const panel = imagePanelRef.current
                   const image = mainImageRef.current
                   if (!panel || !image) return
+
+                  if (currentOutputImageId && image.naturalWidth > 0 && image.naturalHeight > 0) {
+                    setImageRatios((prev) => ({
+                      ...prev,
+                      [currentOutputImageId]: formatImageRatio(image.naturalWidth, image.naturalHeight),
+                    }))
+                    setImageSizes((prev) => ({
+                      ...prev,
+                      [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
+                    }))
+                  }
 
                   const panelRect = panel.getBoundingClientRect()
                   const imageRect = image.getBoundingClientRect()

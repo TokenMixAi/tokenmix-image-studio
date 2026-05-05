@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, ensureImageThumbnailCached, updateTaskInStore, retryTask } from '../store'
+import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTaskInStore, retryTask } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { ParamValue } from '../lib/paramDisplay'
 
@@ -116,14 +116,23 @@ export default function TaskCard({
     setThumbSrc('')
 
     let cancelled = false
-    if (task.outputImages?.[0]) {
-      ensureImageThumbnailCached(task.outputImages[0]).then((thumbnail) => {
+    const imageId = task.outputImages?.[0]
+    let unsubscribe: (() => void) | undefined
+
+    const applyThumbnail = (thumbnail: { dataUrl: string; width?: number; height?: number }) => {
+      if (cancelled) return
+      setThumbSrc(thumbnail.dataUrl)
+      if (thumbnail.width && thumbnail.height) {
+        setCoverRatio(formatImageRatio(thumbnail.width, thumbnail.height))
+        setCoverSize(`${thumbnail.width}×${thumbnail.height}`)
+      }
+    }
+
+    if (imageId) {
+      unsubscribe = subscribeImageThumbnail(imageId, applyThumbnail)
+      ensureImageThumbnailCached(imageId).then((thumbnail) => {
         if (cancelled || !thumbnail) return
-        setThumbSrc(thumbnail.dataUrl)
-        if (thumbnail.width && thumbnail.height) {
-          setCoverRatio(formatImageRatio(thumbnail.width, thumbnail.height))
-          setCoverSize(`${thumbnail.width}×${thumbnail.height}`)
-        }
+        applyThumbnail(thumbnail)
       }).catch(() => {
         if (!cancelled) setThumbSrc('')
       })
@@ -131,6 +140,7 @@ export default function TaskCard({
 
     return () => {
       cancelled = true
+      unsubscribe?.()
     }
   }, [task.outputImages])
 

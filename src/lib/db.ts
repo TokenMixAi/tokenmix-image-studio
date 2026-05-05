@@ -5,7 +5,11 @@ const DB_VERSION = 2
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
 const STORE_THUMBNAILS = 'thumbnails'
-const THUMBNAIL_MAX_SIZE = 360
+const THUMBNAIL_MAX_SIZE = 720
+const THUMBNAIL_QUALITY = 0.9
+const THUMBNAIL_VERSION = 2
+
+export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -72,25 +76,40 @@ export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnai
   return dbTransaction(STORE_THUMBNAILS, 'readonly', (s) => s.get(id))
 }
 
+export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
+  const thumbnail = await getStoredImageThumbnail(id)
+  return thumbnail?.thumbnailVersion === THUMBNAIL_VERSION ? thumbnail : undefined
+}
+
 export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBValidKey> {
   return dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(thumbnail))
 }
 
 export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   const existingThumbnail = await getStoredImageThumbnail(id)
-  if (existingThumbnail) return existingThumbnail
+  if (existingThumbnail?.thumbnailVersion === THUMBNAIL_VERSION) {
+    const image = await getImage(id)
+    if (image && (!image.width || !image.height) && existingThumbnail.width && existingThumbnail.height) {
+      await putImage({ ...image, width: existingThumbnail.width, height: existingThumbnail.height })
+    }
+    return existingThumbnail
+  }
 
   const image = await getImage(id)
   if (!image) return undefined
   const legacyImage = image as StoredImage & Partial<StoredImageThumbnail>
-  if (legacyImage.thumbnailDataUrl) {
+  if (legacyImage.thumbnailDataUrl && legacyImage.thumbnailVersion === THUMBNAIL_VERSION) {
     const thumbnail: StoredImageThumbnail = {
       id,
       thumbnailDataUrl: legacyImage.thumbnailDataUrl,
       width: legacyImage.width,
       height: legacyImage.height,
+      thumbnailVersion: THUMBNAIL_VERSION,
     }
     await putImageThumbnail(thumbnail)
+    if ((!image.width || !image.height) && thumbnail.width && thumbnail.height) {
+      await putImage({ ...image, width: thumbnail.width, height: thumbnail.height })
+    }
     return thumbnail
   }
 
@@ -101,8 +120,12 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
     thumbnailDataUrl: metadata.thumbnailDataUrl,
     width: metadata.width,
     height: metadata.height,
+    thumbnailVersion: THUMBNAIL_VERSION,
   }
   await putImageThumbnail(thumbnail)
+  if (metadata.width && metadata.height && (image.width !== metadata.width || image.height !== metadata.height)) {
+    await putImage({ ...image, width: metadata.width, height: metadata.height })
+  }
   return thumbnail
 }
 
@@ -184,23 +207,35 @@ export async function storeImage(dataUrl: string, source: NonNullable<StoredImag
   const existing = await getImage(id)
   if (!existing) {
     const thumbnail = await safeCreateImageThumbnail(dataUrl)
-    await putImage({ id, dataUrl, createdAt: Date.now(), source })
+    await putImage({
+      id,
+      dataUrl,
+      createdAt: Date.now(),
+      source,
+      width: thumbnail.width,
+      height: thumbnail.height,
+    })
     if (thumbnail.thumbnailDataUrl) {
       await putImageThumbnail({
         id,
         thumbnailDataUrl: thumbnail.thumbnailDataUrl,
         width: thumbnail.width,
         height: thumbnail.height,
+        thumbnailVersion: THUMBNAIL_VERSION,
       })
     }
-  } else if (!await getStoredImageThumbnail(id)) {
+  } else if ((await getStoredImageThumbnail(id))?.thumbnailVersion !== THUMBNAIL_VERSION) {
     const thumbnail = await safeCreateImageThumbnail(existing.dataUrl)
+    if (thumbnail.width && thumbnail.height && (existing.width !== thumbnail.width || existing.height !== thumbnail.height)) {
+      await putImage({ ...existing, width: thumbnail.width, height: thumbnail.height })
+    }
     if (thumbnail.thumbnailDataUrl) {
       await putImageThumbnail({
         id,
         thumbnailDataUrl: thumbnail.thumbnailDataUrl,
         width: thumbnail.width,
         height: thumbnail.height,
+        thumbnailVersion: THUMBNAIL_VERSION,
       })
     }
   }
@@ -231,9 +266,10 @@ async function createImageThumbnail(dataUrl: string): Promise<Omit<StoredImageTh
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
 
   return {
-    thumbnailDataUrl: canvas.toDataURL('image/webp', 0.78),
+    thumbnailDataUrl: canvas.toDataURL('image/webp', THUMBNAIL_QUALITY),
     width,
     height,
+    thumbnailVersion: THUMBNAIL_VERSION,
   }
 }
 
