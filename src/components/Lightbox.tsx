@@ -459,7 +459,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
   const zoomPercent = Math.round(s * 100)
 
   const navBtnClass =
-    'absolute top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-all z-10'
+    'absolute top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-all z-10 backdrop-blur-sm'
 
   return (
     <div
@@ -470,7 +470,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
-      <div className="absolute inset-0 bg-black/75 animate-fade-in" />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in" />
       <div className="relative animate-zoom-in">
         <div
           className="relative flex items-center justify-center"
