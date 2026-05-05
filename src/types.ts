@@ -224,4 +224,10 @@ export interface ExportData {
     createdAt?: number
     source?: 'upload' | 'generated' | 'mask'
   }>
+  /** imageId → 缩略图信息 */
+  thumbnailFiles?: Record<string, {
+    path: string
+    width?: number
+    height?: number
+  }>
 }

@@ -20,6 +20,7 @@ import {
   getAllImageIds,
   getAllImages,
   putImage,
+  putImageThumbnail,
   deleteImage,
   clearImages,
   storeImage,
@@ -36,6 +37,8 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 const imageCache = new Map<string, string>()
 const thumbnailCache = new Map<string, { dataUrl: string; width?: number; height?: number }>()
+const thumbnailBackfillIds = new Set<string>()
+let thumbnailBackfillScheduled = false
 const MAX_IMAGE_CACHE_ENTRIES = 8
 const MAX_THUMBNAIL_CACHE_ENTRIES = 80
 const FAL_RECOVERY_POLL_MS = 10_000
@@ -113,6 +116,48 @@ export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl:
   }
   cacheThumbnail(id, thumbnail)
   return thumbnail
+}
+
+function scheduleThumbnailBackfill(ids: Iterable<string>) {
+  for (const id of ids) {
+    if (!thumbnailCache.has(id)) thumbnailBackfillIds.add(id)
+  }
+  scheduleThumbnailBackfillTick()
+}
+
+function scheduleThumbnailBackfillTick() {
+  if (thumbnailBackfillScheduled || thumbnailBackfillIds.size === 0) return
+  thumbnailBackfillScheduled = true
+
+  const run = () => {
+    thumbnailBackfillScheduled = false
+    void processNextThumbnailBackfill()
+  }
+
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(run, { timeout: 2_000 })
+  } else {
+    globalThis.setTimeout(run, 250)
+  }
+}
+
+async function processNextThumbnailBackfill() {
+  const id = thumbnailBackfillIds.values().next().value
+  if (!id) return
+  thumbnailBackfillIds.delete(id)
+
+  if (!thumbnailCache.has(id)) {
+    const thumbnail = await getImageThumbnail(id)
+    if (thumbnail?.thumbnailDataUrl) {
+      cacheThumbnail(id, {
+        dataUrl: thumbnail.thumbnailDataUrl,
+        width: thumbnail.width,
+        height: thumbnail.height,
+      })
+    }
+  }
+
+  scheduleThumbnailBackfillTick()
 }
 
 function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: string | null | undefined) {
@@ -596,9 +641,15 @@ export async function initStore() {
 
   // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
   const imageIds = await getAllImageIds()
+  const referencedImageIds: string[] = []
   for (const imgId of imageIds) {
-    if (!referencedIds.has(imgId)) await deleteImage(imgId)
+    if (referencedIds.has(imgId)) {
+      referencedImageIds.push(imgId)
+    } else {
+      await deleteImage(imgId)
+    }
   }
+  scheduleThumbnailBackfill(referencedImageIds)
 
   const restoredInputImages: InputImage[] = []
   for (const img of persistedInputImages) {
@@ -1087,6 +1138,7 @@ export async function exportData() {
     }
 
     const imageFiles: ExportData['imageFiles'] = {}
+    const thumbnailFiles: NonNullable<ExportData['thumbnailFiles']> = {}
     const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
 
     for (const img of images) {
@@ -1095,14 +1147,32 @@ export async function exportData() {
       const createdAt = img.createdAt ?? imageCreatedAtFallback.get(img.id) ?? exportedAt
       imageFiles[img.id] = { path, createdAt, source: img.source }
       zipFiles[path] = [bytes, { mtime: new Date(createdAt) }]
+
+      const thumbnail = await getImageThumbnail(img.id)
+      if (thumbnail?.thumbnailDataUrl) {
+        const { ext: thumbnailExt, bytes: thumbnailBytes } = dataUrlToBytes(thumbnail.thumbnailDataUrl)
+        const thumbnailPath = `thumbnails/${img.id}.${thumbnailExt}`
+        thumbnailFiles[img.id] = {
+          path: thumbnailPath,
+          width: thumbnail.width,
+          height: thumbnail.height,
+        }
+        zipFiles[thumbnailPath] = [thumbnailBytes, { mtime: new Date(createdAt) }]
+        cacheThumbnail(img.id, {
+          dataUrl: thumbnail.thumbnailDataUrl,
+          width: thumbnail.width,
+          height: thumbnail.height,
+        })
+      }
     }
 
     const manifest: ExportData = {
-      version: 2,
+      version: 3,
       exportedAt: new Date(exportedAt).toISOString(),
       settings,
       tasks,
       imageFiles,
+      thumbnailFiles,
     }
 
     zipFiles['manifest.json'] = [strToU8(JSON.stringify(manifest, null, 2)), { mtime: new Date(exportedAt) }]
@@ -1139,12 +1209,31 @@ export async function importData(file: File): Promise<boolean> {
     if (!data.tasks || !data.imageFiles) throw new Error('无效的数据格式')
 
     // 还原图片
+    const importedImageIds: string[] = []
     for (const [id, info] of Object.entries(data.imageFiles)) {
       const bytes = unzipped[info.path]
       if (!bytes) continue
       const dataUrl = bytesToDataUrl(bytes, info.path)
       await putImage({ id, dataUrl, createdAt: info.createdAt, source: info.source })
       cacheImage(id, dataUrl)
+      importedImageIds.push(id)
+    }
+
+    for (const [id, info] of Object.entries(data.thumbnailFiles ?? {})) {
+      const bytes = unzipped[info.path]
+      if (!bytes) continue
+      const thumbnailDataUrl = bytesToDataUrl(bytes, info.path)
+      await putImageThumbnail({
+        id,
+        thumbnailDataUrl,
+        width: info.width,
+        height: info.height,
+      })
+      cacheThumbnail(id, {
+        dataUrl: thumbnailDataUrl,
+        width: info.width,
+        height: info.height,
+      })
     }
 
     for (const task of data.tasks) {
@@ -1158,6 +1247,7 @@ export async function importData(file: File): Promise<boolean> {
 
     const tasks = await getAllTasks()
     useStore.getState().setTasks(tasks)
+    scheduleThumbnailBackfill(importedImageIds)
     useStore
       .getState()
       .showToast(`已导入 ${data.tasks.length} 条记录`, 'success')
