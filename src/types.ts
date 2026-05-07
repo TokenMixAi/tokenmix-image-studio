@@ -1,7 +1,56 @@
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses'
-export type ApiProvider = 'openai' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'fal'
+export type ApiProvider = BuiltInApiProvider | string
+export type CustomProviderTemplate = 'http-image'
+
+export type CustomProviderRequestMethod = 'GET' | 'POST'
+export type CustomProviderContentType = 'json' | 'multipart'
+export type CustomProviderFileSource = 'inputImages' | 'mask'
+
+export interface CustomProviderFileMapping {
+  field: string
+  source: CustomProviderFileSource
+  array?: boolean
+}
+
+export interface CustomProviderResultMapping {
+  imageUrlPaths?: string[]
+  b64JsonPaths?: string[]
+}
+
+export interface CustomProviderSubmitMapping {
+  path: string
+  method?: CustomProviderRequestMethod
+  contentType?: CustomProviderContentType
+  query?: Record<string, string>
+  body?: Record<string, unknown>
+  files?: CustomProviderFileMapping[]
+  taskIdPath?: string
+  result?: CustomProviderResultMapping
+}
+
+export interface CustomProviderPollMapping {
+  path: string
+  method?: CustomProviderRequestMethod
+  query?: Record<string, string>
+  intervalSeconds?: number
+  statusPath: string
+  successValues: string[]
+  failureValues: string[]
+  errorPath?: string
+  result: CustomProviderResultMapping
+}
+
+export interface CustomProviderDefinition {
+  id: string
+  name: string
+  template?: CustomProviderTemplate
+  submit: CustomProviderSubmitMapping
+  editSubmit?: CustomProviderSubmitMapping
+  poll?: CustomProviderPollMapping
+}
 
 export interface ApiProfile {
   id: string
@@ -25,7 +74,11 @@ export interface AppSettings {
   apiMode: ApiMode
   codexCli: boolean
   apiProxy: boolean
+  customProviders: CustomProviderDefinition[]
   clearInputAfterSubmit: boolean
+  persistInputOnRestart: boolean
+  reuseTaskApiProfileTemporarily: boolean
+  alwaysShowRetryButton: boolean
   profiles: ApiProfile[]
   activeProfileId: string
 }
@@ -75,6 +128,8 @@ export interface TaskRecord {
   params: TaskParams
   /** 生成时使用的 Provider 类型 */
   apiProvider?: ApiProvider
+  /** 生成时使用的 API 配置 ID */
+  apiProfileId?: string
   /** 生成时使用的 Provider 名称 */
   apiProfileName?: string
   /** 生成时使用的模型 ID */
@@ -85,6 +140,10 @@ export interface TaskRecord {
   falEndpoint?: string
   /** fal.ai 任务连接断开后是否等待自动恢复 */
   falRecoverable?: boolean
+  /** 自定义异步服务商任务 ID，用于重启后继续查询结果 */
+  customTaskId?: string
+  /** 自定义异步任务是否等待自动恢复 */
+  customRecoverable?: boolean
   /** API 返回的实际生效参数，用于标记与请求值不一致的情况 */
   actualParams?: Partial<TaskParams>
   /** 输出图片对应的实际生效参数，key 为 outputImages 中的图片 id */
@@ -222,10 +281,10 @@ export interface FalApiResponse {
 export interface ExportData {
   version: number
   exportedAt: string
-  settings: AppSettings
-  tasks: TaskRecord[]
+  settings?: AppSettings
+  tasks?: TaskRecord[]
   /** imageId → 图片信息 */
-  imageFiles: Record<string, {
+  imageFiles?: Record<string, {
     path: string
     createdAt?: number
     source?: 'upload' | 'generated' | 'mask'
