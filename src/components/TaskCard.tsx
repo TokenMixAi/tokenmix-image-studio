@@ -4,6 +4,7 @@ import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTa
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
+import { CodeIcon } from './icons'
 
 interface Props {
   task: TaskRecord
@@ -37,7 +38,20 @@ export default function TaskCard({
   const suppressClickUntilRef = useRef(0)
   const horizontalSwipeRef = useRef(false)
 
+  const isTagScrollTarget = (target: EventTarget | null) => {
+    return target instanceof Element && Boolean(target.closest('[data-tag-scroll-area]'))
+  }
+
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (isTagScrollTarget(e.target)) {
+      touchStartRef.current = null
+      horizontalSwipeRef.current = false
+      setIsSwiping(false)
+      setSwipeOffset(0)
+      setSwipeActionActive(false)
+      return
+    }
+
     if (swipeResetTimerRef.current != null) {
       window.clearTimeout(swipeResetTimerRef.current)
       swipeResetTimerRef.current = null
@@ -50,6 +64,7 @@ export default function TaskCard({
   }
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (isTagScrollTarget(e.target)) return
     if (!touchStartRef.current) return
     const deltaX = e.touches[0].clientX - touchStartRef.current.x
     const deltaY = e.touches[0].clientY - touchStartRef.current.y
@@ -66,6 +81,15 @@ export default function TaskCard({
   }
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (isTagScrollTarget(e.target)) {
+      touchStartRef.current = null
+      horizontalSwipeRef.current = false
+      setIsSwiping(false)
+      setSwipeOffset(0)
+      setSwipeActionActive(false)
+      return
+    }
+
     setIsSwiping(false)
     setSwipeOffset(0)
     
@@ -368,7 +392,8 @@ export default function TaskCard({
           <div className="mt-auto flex flex-col gap-1.5">
             {/* 参数与信息：横向滚动 */}
             <div 
-              className="flex overflow-x-auto tiny-scrollbar pb-1.5 pt-0.5 gap-1.5 whitespace-nowrap mask-edge-r min-w-0 pr-2"
+              data-tag-scroll-area
+              className="flex overflow-x-auto hide-scrollbar pt-0.5 gap-1.5 whitespace-nowrap mask-edge-r min-w-0 pr-2"
               onTouchStart={(e) => e.stopPropagation()}
               onTouchMove={(e) => e.stopPropagation()}
               onTouchEnd={(e) => e.stopPropagation()}
@@ -380,9 +405,7 @@ export default function TaskCard({
                   className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 text-xs flex-shrink-0"
                   title={task.apiProfileName || task.apiProvider}
                 >
-                  <svg className="w-3 h-3 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
+                  <CodeIcon className="w-3 h-3 flex-shrink-0 text-gray-400" />
                   <span className="truncate max-w-[8rem]">
                     {task.apiProfileName || task.apiProvider}
                   </span>
@@ -395,7 +418,7 @@ export default function TaskCard({
                   title={task.apiModel}
                 >
                   <svg className="w-3 h-3 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                   </svg>
                   <span className="truncate max-w-[8rem]">
                     {task.apiModel}
