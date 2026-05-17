@@ -335,7 +335,7 @@ export default function TaskCard({
                 className="h-full w-full object-cover"
                 alt=""
               />
-              <span className="absolute bottom-1 right-1 bg-blue-500/80 text-white text-xs px-1.5 py-0.5 rounded">
+              <span className="absolute top-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500 text-white text-[10px] sm:text-xs">
                 预览
               </span>
             </>

@@ -47,6 +47,7 @@ export default function DetailModal() {
   const copyErrorTooltip = useTooltip()
   const copyRawUrlsTooltip = useTooltip()
   const viewRawResponseTooltip = useTooltip()
+  const downloadPartialImagesTooltip = useTooltip()
   const retryTooltip = useTooltip()
 
   const clearTextSelection = () => {
@@ -201,6 +202,7 @@ export default function DetailModal() {
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
   const rawImageUrls = task.rawImageUrls ?? []
+  const streamPartialImageIds = task.streamPartialImageIds ?? []
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -322,6 +324,25 @@ export default function DetailModal() {
         showToast(`下载完成：成功 ${result.successCount}，失败 ${result.failCount}`, 'info')
       } else {
         showToast(task.outputImages.length > 1 ? `已开始下载 ${result.successCount} 张图片` : '开始下载', 'success')
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('下载失败', 'error')
+    }
+  }
+
+  const handleDownloadPartialImages = async () => {
+    if (!streamPartialImageIds.length) return
+
+    try {
+      showToast(`开始下载 ${streamPartialImageIds.length} 张中间步骤图...`, 'info')
+      const result = await downloadImageIds(streamPartialImageIds, `task-${task.id}-partials`)
+      if (result.successCount === 0) {
+        showToast('下载失败', 'error')
+      } else if (result.failCount > 0) {
+        showToast(`下载完成：成功 ${result.successCount}，失败 ${result.failCount}`, 'info')
+      } else {
+        showToast(`已开始下载 ${result.successCount} 张中间步骤图`, 'success')
       }
     } catch (err) {
       console.error(err)
@@ -479,7 +500,7 @@ export default function DetailModal() {
                     className="max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain"
                     alt=""
                   />
-                  <span className="absolute bottom-4 right-4 bg-blue-500/80 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm">
+                  <span className="absolute top-4 right-4 bg-blue-500 text-white text-xs px-2 py-0.5 rounded flex items-center gap-1 font-medium">
                     流式预览
                   </span>
                 </>
@@ -578,6 +599,25 @@ export default function DetailModal() {
                     </button>
                     <ViewportTooltip visible={copyRawUrlsTooltip.visible} className="whitespace-nowrap">
                       复制图片链接
+                    </ViewportTooltip>
+                  </div>
+                )}
+                {streamPartialImageIds.length > 0 && (
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      {...downloadPartialImagesTooltip.handlers}
+                      onClick={(e) => {
+                        downloadPartialImagesTooltip.handlers.onClick()
+                        void handleDownloadPartialImages()
+                      }}
+                      className="inline-flex items-center justify-center rounded-full border border-amber-200/80 bg-amber-50 px-3 py-1.5 text-amber-600 transition hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:hover:bg-amber-500/20"
+                      aria-label="下载中间步骤图"
+                    >
+                      <DownloadIcon className="h-4 w-4" />
+                    </button>
+                    <ViewportTooltip visible={downloadPartialImagesTooltip.visible} className="whitespace-nowrap">
+                      下载中间步骤图
                     </ViewportTooltip>
                   </div>
                 )}

@@ -1,7 +1,48 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore } from '../store'
 import type { AgentConversation } from '../types'
+import { useTooltip } from '../hooks/useTooltip'
 import { CloseIcon, EditIcon, TrashIcon } from './icons'
+import ViewportTooltip from './ViewportTooltip'
+
+function HistoryActionButton({
+  tooltip,
+  className,
+  disabled = false,
+  onClick,
+  onMouseDown,
+  children,
+}: {
+  tooltip: string
+  className: string
+  disabled?: boolean
+  onClick?: (e: ReactMouseEvent<HTMLButtonElement>) => void
+  onMouseDown?: (e: ReactMouseEvent<HTMLButtonElement>) => void
+  children: ReactNode
+}) {
+  const tooltipState = useTooltip()
+
+  return (
+    <span className="relative inline-flex" {...tooltipState.handlers}>
+      <button
+        type="button"
+        className={className}
+        disabled={disabled}
+        aria-label={tooltip}
+        onClick={(e) => {
+          tooltipState.dismiss()
+          onClick?.(e)
+        }}
+        onMouseDown={onMouseDown}
+      >
+        {children}
+      </button>
+      <ViewportTooltip visible={tooltipState.visible} className="whitespace-nowrap">
+        {tooltip}
+      </ViewportTooltip>
+    </span>
+  )
+}
 
 function formatTime(value: number) {
   const date = new Date(value)
@@ -48,6 +89,7 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
   const deleteConversation = useStore((s) => s.deleteAgentConversation)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const setAppMode = useStore((s) => s.setAppMode)
+  const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -73,12 +115,13 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
 
   const startRename = (e: React.MouseEvent, id: string, currentTitle: string) => {
     e.stopPropagation()
+    if (agentGeneratingTitleIds[id]) return
     setEditingId(id)
     setEditingTitle(currentTitle)
   }
 
   const confirmRename = () => {
-    if (editingId && editingTitle.trim()) {
+    if (editingId && editingTitle.trim() && !agentGeneratingTitleIds[editingId]) {
       renameConversation(editingId, editingTitle.trim())
     }
     setEditingId(null)
@@ -145,9 +188,9 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="flex-1 bg-transparent border-none outline-none text-sm px-2 text-white placeholder-gray-400"
         />
-        <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg text-gray-400 transition-colors" title="关闭">
+        <HistoryActionButton tooltip="关闭" onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg text-gray-400 transition-colors">
           <CloseIcon className="w-4 h-4" />
-        </button>
+        </HistoryActionButton>
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-1 overscroll-contain">
         {filteredConversations.length === 0 && (
@@ -191,31 +234,32 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0 transition-opacity">
                   {editingId === c.id ? (
-                    <button 
+                    <HistoryActionButton
+                      tooltip="确认"
                       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmRename() }}
                       className="p-1.5 hover:bg-white/10 rounded-md text-green-400 hover:text-green-300 transition-colors"
-                      title="确认"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                    </button>
+                    </HistoryActionButton>
                   ) : (
                     <>
-                      <button 
+                      <HistoryActionButton
+                        tooltip="重命名"
                         onClick={(e) => startRename(e, c.id, c.title)}
-                        className="p-1.5 hover:bg-white/10 rounded-md text-gray-400 hover:text-white transition-colors"
-                        title="重命名"
+                        className="p-1.5 hover:bg-white/10 rounded-md text-gray-400 hover:text-white disabled:text-gray-600 disabled:hover:text-gray-600 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+                        disabled={Boolean(agentGeneratingTitleIds[c.id])}
                       >
                         <EditIcon className="w-3.5 h-3.5" />
-                      </button>
-                      <button 
+                      </HistoryActionButton>
+                      <HistoryActionButton
+                        tooltip="删除"
                         onClick={(e) => handleDelete(e, c.id)}
                         className="p-1.5 hover:bg-white/10 rounded-md text-gray-400 hover:text-red-400 transition-colors"
-                        title="删除"
                       >
                         <TrashIcon className="w-3.5 h-3.5" />
-                      </button>
+                      </HistoryActionButton>
                     </>
                   )}
                 </div>

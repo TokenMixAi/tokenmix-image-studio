@@ -19,10 +19,11 @@ import {
   mergeImportedSettings,
   normalizeCustomProviderDefinition,
   normalizeSettings,
+  normalizeStreamPartialImages,
   switchApiProfileProvider,
 } from '../lib/apiProfiles'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import type { ApiProfile, AppSettings, CustomProviderDefinition } from '../types'
+import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type CustomProviderDefinition } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
@@ -165,7 +166,8 @@ function isPristineNewOpenAIProfile(profile: ApiProfile) {
     profile.apiMode === 'images' &&
     profile.codexCli === false &&
     profile.apiProxy === defaultProfile.apiProxy &&
-    profile.streamImages === defaultProfile.streamImages
+    profile.streamImages === defaultProfile.streamImages &&
+    profile.streamPartialImages === defaultProfile.streamPartialImages
 }
 
 function getImportedProfileFromMergedSettings(
@@ -491,6 +493,7 @@ export default function SettingsModal() {
         apiProxy: profile.provider === 'openai' && apiProxyAvailable ? (apiProxyLocked || profile.apiProxy) : false,
         codexCli: profile.provider === 'openai' ? profile.codexCli : false,
         streamImages: profile.provider === 'openai' ? profile.streamImages : false,
+        streamPartialImages: profile.provider === 'openai' ? normalizeStreamPartialImages(profile.streamPartialImages) : DEFAULT_STREAM_PARTIAL_IMAGES,
       }
     })
     const fallbackProfile = createDefaultOpenAIProfile({ id: newId('openai') })
@@ -530,7 +533,8 @@ export default function SettingsModal() {
       const model = profile.model.trim() || getDefaultModelForMode(profile.apiMode)
       url.searchParams.set('model', !options.includeApiKey && options.useNewApiModel ? '{model}' : model)
       if (profile.codexCli) url.searchParams.set('codexCli', 'true')
-      if (profile.streamImages) url.searchParams.set('streamImages', 'true')
+      if (profile.streamImages !== DEFAULT_SETTINGS.streamImages) url.searchParams.set('streamImages', String(Boolean(profile.streamImages)))
+      if (profile.streamPartialImages !== DEFAULT_STREAM_PARTIAL_IMAGES) url.searchParams.set('streamPartialImages', String(normalizeStreamPartialImages(profile.streamPartialImages)))
 
       let result = url.toString()
       if (!options.includeApiKey) {
@@ -1377,6 +1381,7 @@ export default function SettingsModal() {
                   </div>
                 </div>
 
+              {/* 1. 配置名称 */}
               <label className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">配置名称</span>
                 <input
@@ -1388,6 +1393,7 @@ export default function SettingsModal() {
                 />
               </label>
 
+              {/* 2. 服务商类型 */}
               <div className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">服务商类型</span>
                 <Select
@@ -1399,6 +1405,7 @@ export default function SettingsModal() {
                 />
               </div>
 
+              {/* 3. API URL */}
               {activeProviderUsesApiUrl && (
                 <label className="block">
                   <div className="mb-1.5 flex items-center justify-between">
@@ -1425,27 +1432,7 @@ export default function SettingsModal() {
                 </label>
               )}
 
-              {activeProfile.provider === 'openai' && (
-                <div className="block">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">Codex CLI 兼容模式</span>
-                    <button
-                      type="button"
-                      onClick={() => updateActiveProfile({ codexCli: !activeProfile.codexCli }, true)}
-                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.codexCli ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      role="switch"
-                      aria-checked={activeProfile.codexCli}
-                      aria-label="Codex CLI 兼容模式"
-                    >
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.codexCli ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                    </button>
-                  </div>
-                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后应用 Codex CLI 实际支持的参数。支持查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>。
-                  </div>
-                </div>
-              )}
-
+              {/* 4. API 代理（紧跟 URL） */}
               {apiProxyAvailable && activeProfile.provider === 'openai' && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
@@ -1470,6 +1457,7 @@ export default function SettingsModal() {
                 </div>
               )}
 
+              {/* 5. API Key */}
               <div className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
                 <div className="relative">
@@ -1507,6 +1495,7 @@ export default function SettingsModal() {
                 </div>
               </div>
 
+              {/* 6. API 接口（Images/Responses） */}
               {activeProfile.provider === 'openai' && (
                 <div className="block">
                   <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API 接口</span>
@@ -1532,27 +1521,7 @@ export default function SettingsModal() {
                 </div>
               )}
 
-              {activeProfile.provider === 'openai' && (
-                <div className="block">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="block text-sm text-gray-600 dark:text-gray-300">流式图片预览</span>
-                    <button
-                      type="button"
-                      onClick={() => updateActiveProfile({ streamImages: !activeProfile.streamImages }, true)}
-                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.streamImages ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      role="switch"
-                      aria-checked={!!activeProfile.streamImages}
-                      aria-label="流式图片预览"
-                    >
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.streamImages ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                    </button>
-                  </div>
-                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后请求会发送 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">stream: true</code> 和 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">partial_images: 2</code>，任务生成中会显示部分图片预览。
-                  </div>
-                </div>
-              )}
-
+              {/* 7. 模型 ID（紧跟接口选择） */}
               <label className="block">
                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">
                   模型 ID
@@ -1581,6 +1550,49 @@ export default function SettingsModal() {
                 </div>
               </label>
 
+              {/* 8. 流式传输 + 中间步骤图像数 */}
+              {activeProfile.provider === 'openai' && (
+                <div className="block space-y-3">
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between gap-3">
+                      <span className="block text-sm text-gray-600 dark:text-gray-300">流式传输</span>
+                      <button
+                        type="button"
+                        onClick={() => updateActiveProfile({ streamImages: !activeProfile.streamImages }, true)}
+                        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.streamImages ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        role="switch"
+                        aria-checked={!!activeProfile.streamImages}
+                        aria-label="流式传输"
+                      >
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.streamImages ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                      </button>
+                    </div>
+                    <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                      开启后请求以流式传输，可有效避免生成耗时较长的任务被断开连接。并非所有服务商和网关都支持此功能。
+                    </div>
+                  </div>
+                  <label className={`block ${activeProfile.streamImages ? '' : 'opacity-60'}`}>
+                    <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求中间步骤图像数</span>
+                    <Select
+                      value={normalizeStreamPartialImages(activeProfile.streamPartialImages)}
+                      onChange={(value) => updateActiveProfile({ streamPartialImages: normalizeStreamPartialImages(value) }, true)}
+                      disabled={!activeProfile.streamImages}
+                      options={[
+                        { label: '0，不请求', value: 0 },
+                        { label: '1 张', value: 1 },
+                        { label: '2 张', value: 2 },
+                        { label: '3 张', value: 3 },
+                      ]}
+                      className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                    />
+                    <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
+                      对应 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">partial_images</code> 参数（0-3）。大于 0 时，生成过程中会返回中间步骤的预览图像，但每张中间图像会额外计费。设为 0 时不请求中间步骤图像。
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {/* 9. 返回 Base64 图片数据 */}
               {activeProviderIsOpenAICompatible && (
                 <div className="block">
                   <div className="mb-1.5 flex items-center justify-between">
@@ -1597,11 +1609,34 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后在请求体中追加 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">response_format: b64_json</code>，尝试使接口直接返回 Base64 编码的图片数据而非 URL。
+                    开启后在请求体中追加 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">response_format: b64_json</code>，使接口直接返回 Base64 编码的图片数据而非 URL。并非所有服务商和网关都支持此功能。
                   </div>
                 </div>
               )}
 
+              {/* 10. Codex CLI 兼容模式 */}
+              {activeProfile.provider === 'openai' && (
+                <div className="block">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="block text-sm text-gray-600 dark:text-gray-300">Codex CLI 兼容模式</span>
+                    <button
+                      type="button"
+                      onClick={() => updateActiveProfile({ codexCli: !activeProfile.codexCli }, true)}
+                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${activeProfile.codexCli ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      role="switch"
+                      aria-checked={activeProfile.codexCli}
+                      aria-label="Codex CLI 兼容模式"
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${activeProfile.codexCli ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                    </button>
+                  </div>
+                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                    开启后应用 Codex CLI 实际支持的参数。支持查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>。
+                  </div>
+                </div>
+              )}
+
+              {/* 11. 请求超时 */}
               {activeProviderIsOpenAICompatible && (
                 <label className="block">
                   <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求超时 (秒)</span>

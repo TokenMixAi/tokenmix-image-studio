@@ -1,4 +1,4 @@
-import type { ApiProfile, AppSettings, ResponsesApiResponse, TaskParams } from '../types'
+import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
 
@@ -39,6 +39,16 @@ const AGENT_IMAGE_INSTRUCTIONS = [
   'When the user mentions an image by position or description (e.g. "the first image", "the cat photo"), resolve it to the corresponding id. Use these ids in your image_generation prompts to reference the correct image. Only use ids that already exist in the conversation; never invent ids.',
 ].join('\n')
 
+const AGENT_TITLE_INSTRUCTIONS = [
+  'Generate a concise conversation title from the first user message.',
+  'Output exactly one XML element in this form: <title>short title</title>',
+  'Do not output markdown, code fences, explanations, attributes, or additional XML elements.',
+  'Use the main language of the user message. Chinese titles should be no more than 12 characters. English titles should be no more than 5 words.',
+  'Escape XML special characters when necessary.',
+].join('\n')
+
+const AGENT_TITLE_MAX_LENGTH = 28
+
 function createHeaders(profile: ApiProfile): Record<string, string> {
   return {
     Authorization: `Bearer ${profile.apiKey}`,
@@ -46,7 +56,7 @@ function createHeaders(profile: ApiProfile): Record<string, string> {
   }
 }
 
-function createImageTool(params: TaskParams): Record<string, unknown> {
+function createImageTool(params: TaskParams, profile: ApiProfile): Record<string, unknown> {
   const tool: Record<string, unknown> = {
     type: 'image_generation',
     action: 'auto',
@@ -61,7 +71,94 @@ function createImageTool(params: TaskParams): Record<string, unknown> {
     tool.output_compression = params.output_compression
   }
 
+  if (profile.streamImages) {
+    tool.partial_images = profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
+  }
+
   return tool
+}
+
+function isEventStreamResponse(response: Response): boolean {
+  return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
+  const value = source[key]
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function getStreamEventErrorMessage(event: Record<string, unknown>): string | null {
+  const error = event.error
+  if (isRecordValue(error)) {
+    const message = getStringValue(error, 'message')
+    if (message) return message
+  }
+  if (typeof error === 'string' && error.trim()) return error
+
+  const type = getStringValue(event, 'type')
+  if (type?.endsWith('.failed')) return getStringValue(event, 'message') ?? 'Agent 流式请求失败'
+  return null
+}
+
+function parseServerSentEventBlock(block: string): string | null {
+  const dataLines: string[] = []
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) continue
+    if (!line.startsWith('data:')) continue
+    dataLines.push(line.slice(5).replace(/^ /, ''))
+  }
+
+  const data = dataLines.join('\n').trim()
+  if (!data || data === '[DONE]') return null
+  return data
+}
+
+async function readJsonServerSentEvents(response: Response, onEvent: (event: Record<string, unknown>) => void | Promise<void>): Promise<void> {
+  if (!response.body) throw new Error('接口未返回可读取的流式响应')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const processBlock = async (block: string) => {
+    const data = parseServerSentEventBlock(block)
+    if (!data) return
+
+    let event: unknown
+    try {
+      event = JSON.parse(data)
+    } catch {
+      throw new Error('Agent 流式响应包含无法解析的 JSON 事件')
+    }
+    if (!isRecordValue(event)) return
+
+    const errorMessage = getStreamEventErrorMessage(event)
+    if (errorMessage) throw new Error(errorMessage)
+
+    await onEvent(event)
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let separatorIndex = buffer.search(/\r?\n\r?\n/)
+    while (separatorIndex >= 0) {
+      const block = buffer.slice(0, separatorIndex)
+      const separator = buffer.match(/\r?\n\r?\n/)?.[0] ?? '\n\n'
+      buffer = buffer.slice(separatorIndex + separator.length)
+      await processBlock(block)
+      separatorIndex = buffer.search(/\r?\n\r?\n/)
+    }
+  }
+
+  buffer += decoder.decode()
+  if (buffer.trim()) await processBlock(buffer)
 }
 
 function createInput(messages: AgentApiMessage[]) {
@@ -96,6 +193,29 @@ function extractText(payload: ResponsesApiResponse) {
   }
 
   return chunks.join('\n').trim()
+}
+
+function decodeXmlText(text: string) {
+  return text.replace(/&(?:#(\d+)|#x([\da-fA-F]+)|amp|lt|gt|quot|apos);/g, (entity, decimal: string | undefined, hex: string | undefined) => {
+    if (decimal) return String.fromCodePoint(Number(decimal))
+    if (hex) return String.fromCodePoint(Number.parseInt(hex, 16))
+    switch (entity) {
+      case '&amp;': return '&'
+      case '&lt;': return '<'
+      case '&gt;': return '>'
+      case '&quot;': return '"'
+      case '&apos;': return "'"
+      default: return entity
+    }
+  })
+}
+
+function parseAgentConversationTitleXml(text: string) {
+  const match = text.match(/<title>([\s\S]*?)<\/title>/i)
+  const title = match ? decodeXmlText(match[1]).trim() : ''
+  const chars = Array.from(title)
+  if (chars.length <= AGENT_TITLE_MAX_LENGTH) return title
+  return `${chars.slice(0, AGENT_TITLE_MAX_LENGTH - 3).join('')}...`
 }
 
 function extractImages(payload: ResponsesApiResponse, fallbackMime: string): AgentApiResultImage[] {
@@ -139,14 +259,70 @@ function extractImages(payload: ResponsesApiResponse, fallbackMime: string): Age
   return images
 }
 
+function getStreamResponsePayload(event: Record<string, unknown>): ResponsesApiResponse | null {
+  const response = event.response
+  if (isRecordValue(response)) return response as ResponsesApiResponse
+
+  const item = event.item
+  if (isRecordValue(item)) return { output: [item as ResponsesOutputItem] }
+
+  return null
+}
+
+async function parseAgentStreamResponse(
+  response: Response,
+  mime: string,
+  onTextDelta?: (delta: string) => void,
+): Promise<AgentApiResult> {
+  let completedPayload: ResponsesApiResponse | null = null
+  const outputItems: ResponsesOutputItem[] = []
+  let streamedText = ''
+
+  await readJsonServerSentEvents(response, (event) => {
+    const type = getStringValue(event, 'type')
+
+    if (type === 'response.output_text.delta') {
+      const delta = getStringValue(event, 'delta')
+      if (delta) {
+        streamedText += delta
+        onTextDelta?.(delta)
+      }
+      return
+    }
+
+    const payload = getStreamResponsePayload(event)
+    if (!payload) return
+
+    if (type === 'response.output_item.done' && Array.isArray(payload.output)) {
+      outputItems.push(...payload.output)
+      return
+    }
+
+    completedPayload = payload
+  })
+
+  const payload: ResponsesApiResponse | null = completedPayload ?? (outputItems.length ? { output: outputItems } : null)
+  if (!payload) throw new Error('Agent 流式接口未返回最终响应数据')
+
+  const text = extractText(payload) || streamedText.trim()
+  return {
+    responseId: payload.id,
+    text,
+    images: extractImages(payload, mime),
+    outputItems: payload.output ?? [],
+    rawResponsePayload: JSON.stringify(payload, null, 2),
+  }
+}
+
 export async function callAgentResponsesApi(opts: {
   settings: AppSettings
   profile: ApiProfile
   params: TaskParams
   input: unknown
   signal?: AbortSignal
+  onTextDelta?: (delta: string) => void
 }): Promise<AgentApiResult> {
-  const { settings, profile, params, input, signal } = opts
+  const { settings, profile, params, input, signal, onTextDelta } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -161,7 +337,10 @@ export async function callAgentResponsesApi(opts: {
       model: profile.model || settings.model,
       instructions: AGENT_IMAGE_INSTRUCTIONS,
       input,
-      tools: [createImageTool(params)],
+      tools: [createImageTool(params, profile)],
+    }
+    if (profile.streamImages) {
+      body.stream = true
     }
 
     const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
@@ -176,6 +355,10 @@ export async function callAgentResponsesApi(opts: {
       throw new Error(await getApiErrorMessage(response))
     }
 
+    if (profile.streamImages && isEventStreamResponse(response)) {
+      return parseAgentStreamResponse(response, mime, onTextDelta)
+    }
+
     const payload = await response.json() as ResponsesApiResponse
     return {
       responseId: payload.id,
@@ -184,6 +367,55 @@ export async function callAgentResponsesApi(opts: {
       outputItems: payload.output,
       rawResponsePayload: JSON.stringify(payload, null, 2),
     }
+  } finally {
+    clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', abortFromCaller)
+  }
+}
+
+export async function callAgentConversationTitleApi(opts: {
+  settings: AppSettings
+  profile: ApiProfile
+  prompt: string
+  imageDataUrls?: string[]
+  signal?: AbortSignal
+}): Promise<string> {
+  const { settings, profile, prompt, imageDataUrls, signal } = opts
+  const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  const abortFromCaller = () => controller.abort()
+  if (signal?.aborted) controller.abort()
+  signal?.addEventListener('abort', abortFromCaller, { once: true })
+
+  try {
+    const content: Array<Record<string, string>> = [
+      { type: 'input_text', text: `The following is the first message the user sent in a conversation. Generate a title for this conversation.\n\n${prompt}` },
+    ]
+    for (const dataUrl of imageDataUrls ?? []) {
+      content.push({ type: 'input_image', image_url: dataUrl })
+    }
+
+    const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
+      method: 'POST',
+      headers: createHeaders(profile),
+      cache: 'no-store',
+      body: JSON.stringify({
+        model: profile.model || settings.model,
+        instructions: AGENT_TITLE_INSTRUCTIONS,
+        input: [{ role: 'user', content }],
+        max_output_tokens: 32,
+      }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(await getApiErrorMessage(response))
+    }
+
+    const payload = await response.json() as ResponsesApiResponse
+    return parseAgentConversationTitleXml(extractText(payload))
   } finally {
     clearTimeout(timeoutId)
     signal?.removeEventListener('abort', abortFromCaller)

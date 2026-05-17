@@ -1,4 +1,4 @@
-import type { ApiProfile, CustomProviderDefinition, CustomProviderPollMapping, CustomProviderResultMapping, CustomProviderSubmitMapping, ImageApiResponse, ImageResponseItem, ResponsesApiResponse, ResponsesOutputItem, TaskParams } from '../types'
+import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefinition, type CustomProviderPollMapping, type CustomProviderResultMapping, type CustomProviderSubmitMapping, type ImageApiResponse, type ImageResponseItem, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
@@ -19,7 +19,10 @@ import {
 } from './imageApiShared'
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
-const DEFAULT_STREAM_PARTIAL_IMAGES = 2
+
+function getStreamPartialImages(profile: ApiProfile): number {
+  return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
+}
 
 function appendQuery(path: string, query?: Record<string, string>): string {
   if (!query || !Object.keys(query).length) return path
@@ -188,7 +191,7 @@ function createResponsesImageTool(
   }
 
   if (profile.streamImages) {
-    tool.partial_images = DEFAULT_STREAM_PARTIAL_IMAGES
+    tool.partial_images = getStreamPartialImages(profile)
   }
 
   if (!profile.codexCli) {
@@ -528,7 +531,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       }
       if (profile.streamImages) {
         formData.append('stream', 'true')
-        formData.append('partial_images', String(DEFAULT_STREAM_PARTIAL_IMAGES))
+        formData.append('partial_images', String(getStreamPartialImages(profile)))
       }
 
       const imageBlobs: Blob[] = []
@@ -590,7 +593,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       }
       if (profile.streamImages) {
         body.stream = true
-        body.partial_images = DEFAULT_STREAM_PARTIAL_IMAGES
+        body.partial_images = getStreamPartialImages(profile)
       }
 
       response = await fetch(buildApiUrl(profile.baseUrl, paths.generationPath, proxyConfig, useApiProxy), {

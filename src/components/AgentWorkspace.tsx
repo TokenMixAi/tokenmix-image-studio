@@ -5,6 +5,7 @@ import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import TaskCard from './TaskCard'
 import ViewportTooltip from './ViewportTooltip'
+import MarkdownRenderer from './MarkdownRenderer'
 import { TrashIcon, DownloadIcon, EditIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, SidebarLeftIcon, FavoriteIcon, CloseIcon, CopyIcon } from './icons'
 
 function AgentActionButton({
@@ -69,6 +70,15 @@ function ChatImageThumb({ imageId }: { imageId: string }) {
   )
 }
 
+function AgentStreamingCursor() {
+  return (
+    <span
+      aria-label="正在生成"
+      className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500 align-baseline dark:bg-blue-400"
+    />
+  )
+}
+
 function formatTime(value: number) {
   return new Date(value).toLocaleString()
 }
@@ -117,6 +127,7 @@ export default function AgentWorkspace() {
   const setAgentEditingRoundId = useStore((s) => s.setAgentEditingRoundId)
   const setActiveAgentRoundId = useStore((s) => s.setActiveAgentRoundId)
   const showToast = useStore((s) => s.showToast)
+  const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
 
@@ -308,6 +319,10 @@ export default function AgentWorkspace() {
   }
 
   const handleRenameConversation = (id: string, currentTitle: string) => {
+    if (agentGeneratingTitleIds[id]) {
+      showToast('标题生成中，暂不能修改标题', 'info')
+      return
+    }
     const title = window.prompt('输入新的对话标题', currentTitle)
     if (title != null) renameConversation(id, title)
   }
@@ -488,33 +503,36 @@ export default function AgentWorkspace() {
           {filteredConversations.length === 0 && (
             <div className="px-2 py-8 text-center text-sm text-gray-400">没有找到匹配的聊天</div>
           )}
-          {filteredConversations.map((item) => (
-            <div
-              key={item.id}
-              data-agent-conversation-item
-              className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-white/[0.04]"
-              onPointerDown={(e) => handleConversationPointerDown(item.id, e)}
-              onPointerUp={clearConversationLongPressTimer}
-              onPointerCancel={clearConversationLongPressTimer}
-              onPointerLeave={clearConversationLongPressTimer}
-              onContextMenu={(e) => {
-                if (conversationActionsId === item.id) e.preventDefault()
-              }}
-            >
-              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => handleConversationSelect(item.id)}>
-                <div className={`truncate ${item.id === activeConversationId ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>{item.title}</div>
-                <div className="text-xs text-gray-400">{formatTime(item.updatedAt)}</div>
-              </button>
-              <div className={`flex shrink-0 items-center gap-1 overflow-hidden transition-all duration-150 group-hover:w-[4.5rem] group-hover:opacity-100 group-focus-within:w-[4.5rem] group-focus-within:opacity-100 ${conversationActionsId === item.id ? 'w-[4.5rem] opacity-100' : 'w-0 opacity-0'}`}>
-                <button type="button" className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleRenameConversation(item.id, item.title)} title="编辑标题">
-                  <EditIcon className="w-4 h-4" />
+          {filteredConversations.map((item) => {
+            const isGeneratingTitle = Boolean(agentGeneratingTitleIds[item.id])
+            return (
+              <div
+                key={item.id}
+                data-agent-conversation-item
+                className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-gray-100 dark:hover:bg-white/[0.04]"
+                onPointerDown={(e) => handleConversationPointerDown(item.id, e)}
+                onPointerUp={clearConversationLongPressTimer}
+                onPointerCancel={clearConversationLongPressTimer}
+                onPointerLeave={clearConversationLongPressTimer}
+                onContextMenu={(e) => {
+                  if (conversationActionsId === item.id) e.preventDefault()
+                }}
+              >
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => handleConversationSelect(item.id)}>
+                  <div className={`truncate ${item.id === activeConversationId ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>{item.title}</div>
+                  <div className="text-xs text-gray-400">{formatTime(item.updatedAt)}</div>
                 </button>
-                <button type="button" className="p-1.5 text-gray-400 hover:text-red-500" onClick={() => handleDeleteConversation(item.id)} title="删除">
-                  <TrashIcon className="w-4 h-4" />
-                </button>
+                <div className={`flex shrink-0 items-center gap-1 overflow-hidden transition-all duration-150 group-hover:w-[4.5rem] group-hover:opacity-100 group-focus-within:w-[4.5rem] group-focus-within:opacity-100 ${conversationActionsId === item.id ? 'w-[4.5rem] opacity-100' : 'w-0 opacity-0'}`}>
+                  <AgentActionButton tooltip="编辑标题" className="p-1.5 text-gray-400 hover:text-gray-700 disabled:text-gray-300 disabled:hover:text-gray-300 disabled:cursor-not-allowed dark:hover:text-gray-200 dark:disabled:text-gray-600 dark:disabled:hover:text-gray-600" onClick={() => handleRenameConversation(item.id, item.title)} disabled={isGeneratingTitle}>
+                    <EditIcon className="w-4 h-4" />
+                  </AgentActionButton>
+                  <AgentActionButton tooltip="删除" className="p-1.5 text-gray-400 hover:text-red-500" onClick={() => handleDeleteConversation(item.id)}>
+                    <TrashIcon className="w-4 h-4" />
+                  </AgentActionButton>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
         </div>
       </aside>
@@ -565,6 +583,7 @@ export default function AgentWorkspace() {
               const renderedMessages = activeMessages.map((message) => {
                 const round = conversation.rounds.find((item) => item.id === message.roundId)
                 const isAssistant = message.role === 'assistant'
+                const isStreamingAssistant = isAssistant && round?.status === 'running'
                 const isEditing = !isAssistant && round?.id === agentEditingRoundId
                 const siblingRounds = !isAssistant && round ? getAgentSiblingRounds(conversation, round) : []
                 const siblingIndex = round ? siblingRounds.findIndex((item) => item.id === round.id) : -1
@@ -577,20 +596,23 @@ export default function AgentWorkspace() {
                 const parts = getPromptMentionParts(message.content, inputImagesForRound)
                 return (
                   <div key={message.id} className={`flex w-full mb-6 ${isAssistant ? 'justify-start' : 'justify-end'}`}>
-                    <article 
+                    <div
                       ref={(node) => {
                         if (!isAssistant && node) messageRefs.current.set(message.roundId, node)
                         else if (!isAssistant) messageRefs.current.delete(message.roundId)
                       }}
-                      className={`group relative flex flex-col max-w-[95%] md:max-w-[85%] lg:max-w-[75%] rounded-2xl p-4 transition-all duration-200 ${
+                      className={`group flex max-w-[95%] flex-col md:max-w-[85%] lg:max-w-[75%] ${isAssistant ? 'items-start' : 'items-end'}`}
+                    >
+                      <article 
+                        className={`relative flex max-w-full flex-col rounded-2xl p-4 transition-all duration-200 ${
                         isAssistant 
                           ? 'bg-white/70 dark:bg-white/[0.03] border border-gray-200 dark:border-white/[0.08] rounded-tl-sm hover:bg-white dark:hover:bg-white/[0.04]' 
                           : `bg-gray-100 dark:bg-[#2A2D31] rounded-tr-sm ${isEditing ? 'ring-2 ring-blue-500/50 dark:ring-blue-400/50' : ''}`
                       }`}
-                    >
+                      >
                     <div className="mb-2 flex items-center justify-between gap-4 text-xs text-gray-500 dark:text-gray-400">
                       <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedRoundId(message.roundId); }} className="hover:text-gray-800 dark:hover:text-gray-200 transition-colors font-medium">
-                         {isAssistant ? 'Agent' : '用户'} <span className="opacity-50 font-normal ml-1">· 第 {round?.index ?? '?'} 轮</span>
+                         <span className={isAssistant ? 'text-blue-500 dark:text-blue-400' : ''}>{isAssistant ? 'Agent' : '用户'}</span> <span className="opacity-50 font-normal ml-1">· 第 {round?.index ?? '?'} 轮</span>
                       </button>
                     </div>
                     
@@ -603,18 +625,23 @@ export default function AgentWorkspace() {
                     )}
 
                     {round?.status === 'error' && isAssistant && message.content.startsWith('请求失败：') ? (
-                      <div className="flex flex-col gap-2">
+                      <div className="flex flex-col">
                         {(() => {
                           const content = message.content.replace(/^请求失败：/, '');
                           const [mainErr, ...hints] = content.split('\n提示：');
                           return (
                             <>
-                              <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-red-400 break-words">
-                                {mainErr}
+                              <div className="flex items-start gap-2 text-red-500 dark:text-red-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-[18px] h-[18px] mt-[1.5px] flex-shrink-0">
+                                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                </svg>
+                                <div className="whitespace-pre-wrap text-[14px] leading-relaxed break-words font-medium">
+                                  {mainErr}
+                                </div>
                               </div>
                               {hints.length > 0 && (
-                                <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-gray-400/80 break-words border-t border-white/5 pt-2 mt-1">
-                                  提示：{hints.join('\n提示：')}
+                                <div className="pl-[26px] mt-1.5 whitespace-pre-wrap text-[13px] leading-relaxed text-gray-500 dark:text-gray-400 break-words opacity-90">
+                                  <span className="font-medium">提示：</span>{hints.join('\n提示：')}
                                 </div>
                               )}
                             </>
@@ -622,9 +649,20 @@ export default function AgentWorkspace() {
                         })()}
                       </div>
                     ) : (
-                      <div data-selectable-text={!isAssistant ? '' : undefined} className={`whitespace-pre-wrap text-[15px] leading-relaxed text-gray-800 dark:text-gray-100 ${!isAssistant ? 'select-text' : ''}`}>
-                        {parts.map((part, i) => 
-                          part.type === 'text' ? <span key={i}>{part.text}</span> : <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-blue-100/50 text-blue-700 dark:bg-blue-500/30 dark:text-blue-300 text-xs font-medium mx-0.5 align-baseline">{part.text}</span>
+                      <div data-selectable-text className={`text-[15px] leading-relaxed text-gray-800 dark:text-gray-100 ${!isAssistant ? 'select-text' : ''}`}>
+                        {isAssistant ? (
+                          <>
+                            {message.content.trim() && <MarkdownRenderer content={message.content} streaming={isStreamingAssistant} />}
+                            {isStreamingAssistant && !message.content.trim() && <AgentStreamingCursor />}
+                          </>
+                        ) : parts.some((part) => part.type === 'mention') ? (
+                          <div className="whitespace-pre-wrap break-words">
+                            {parts.map((part, i) =>
+                              part.type === 'text' ? <span key={i}>{part.text}</span> : <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-blue-100/50 text-blue-700 dark:bg-blue-500/30 dark:text-blue-300 text-xs font-medium mx-0.5 align-baseline">{part.text}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <MarkdownRenderer content={parts[0]?.text ?? ''} />
                         )}
                       </div>
                     )}
@@ -653,7 +691,9 @@ export default function AgentWorkspace() {
                       </div>
                     )}
 
-                    <div className={`mt-3 flex items-center justify-between gap-3 transition-opacity duration-200 ${isEditing || hasBranches ? 'opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'}`} onClick={e => e.stopPropagation()}>
+                      </article>
+
+                    {!isStreamingAssistant && <div className={`mt-2 flex w-full min-w-fit items-center justify-between gap-3 px-1 transition-opacity duration-200 ${isEditing || hasBranches ? 'opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'}`} onClick={e => e.stopPropagation()}>
                       <div className="flex min-w-0 items-center gap-2">
                         {isEditing && (
                           <div className="inline-flex items-center rounded-md bg-blue-100 px-2 py-1 text-xs text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
@@ -755,8 +795,8 @@ export default function AgentWorkspace() {
                           </>
                         )}
                       </div>
+                    </div>}
                     </div>
-                  </article>
                 </div>
                 )
               })

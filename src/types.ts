@@ -5,6 +5,7 @@ export type AppMode = 'gallery' | 'agent'
 export type BuiltInApiProvider = 'openai' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
+export const DEFAULT_STREAM_PARTIAL_IMAGES = 0
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
 export type CustomProviderContentType = 'json' | 'multipart'
@@ -66,7 +67,8 @@ export interface ApiProfile {
   apiProxy: boolean
   responseFormatB64Json?: boolean
   streamImages?: boolean
-  providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages'>>>>
+  streamPartialImages?: number
+  providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages'>>>>
 }
 
 export interface AppSettings {
@@ -79,6 +81,7 @@ export interface AppSettings {
   codexCli: boolean
   apiProxy: boolean
   streamImages?: boolean
+  streamPartialImages?: number
   customProviders: CustomProviderDefinition[]
   providerOrder?: string[]
   clearInputAfterSubmit: boolean
@@ -163,6 +166,8 @@ export interface TaskRecord {
   maskImageId?: string | null
   /** 输出图片的 image store id 列表 */
   outputImages: string[]
+  /** 流式生成的中间步骤图片 id 列表，仅失败时保留供排查/下载 */
+  streamPartialImageIds?: string[]
   /** API 返回的原始图片 HTTP URL（非 base64 时记录） */
   rawImageUrls?: string[]
   /** 发生解析错误时的原始响应 JSON */

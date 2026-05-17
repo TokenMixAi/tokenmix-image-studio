@@ -529,19 +529,32 @@ describe('custom providers', () => {
     expect(profile.model).toBe(DEFAULT_IMAGES_MODEL)
   })
 
-  it('enables streaming image previews by default for new OpenAI profiles while preserving explicit false', () => {
+  it('enables streaming by default and preserves partial image count', () => {
     expect(createDefaultOpenAIProfile().streamImages).toBe(true)
+    expect(createDefaultOpenAIProfile().streamPartialImages).toBe(0)
     expect(DEFAULT_SETTINGS.streamImages).toBe(true)
+    expect(DEFAULT_SETTINGS.streamPartialImages).toBe(0)
     expect(DEFAULT_SETTINGS.profiles[0].streamImages).toBe(true)
+    expect(DEFAULT_SETTINGS.profiles[0].streamPartialImages).toBe(0)
 
     const normalized = normalizeSettings({
       profiles: [
-        createDefaultOpenAIProfile({ streamImages: false }),
+        createDefaultOpenAIProfile({ streamImages: false, streamPartialImages: 3 }),
       ],
     })
 
     expect(normalized.streamImages).toBe(false)
+    expect(normalized.streamPartialImages).toBe(3)
     expect(normalized.profiles[0].streamImages).toBe(false)
+    expect(normalized.profiles[0].streamPartialImages).toBe(3)
+
+    const clamped = normalizeSettings({
+      profiles: [
+        createDefaultOpenAIProfile({ streamPartialImages: 8 }),
+      ],
+    })
+
+    expect(clamped.profiles[0].streamPartialImages).toBe(3)
   })
 
   it('restores OpenAI-compatible URL after switching through fal.ai', () => {
