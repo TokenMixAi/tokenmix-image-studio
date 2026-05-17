@@ -34,12 +34,9 @@ export default function DetailModal() {
   const [now, setNow] = useState(Date.now())
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
-  const imagePanelRef = useRef<HTMLDivElement>(null)
-  const mainImageRef = useRef<HTMLImageElement>(null)
   const modalRef = useRef<HTMLDivElement>(null)
   const rawUrlsModalRef = useRef<HTMLDivElement>(null)
   const rawResponseModalRef = useRef<HTMLDivElement>(null)
-  const [imageLabelLeft, setImageLabelLeft] = useState(8)
 
   const rawUrlsBackdropPointerDownRef = useRef(false)
   const rawResponseBackdropPointerDownRef = useRef(false)
@@ -49,6 +46,8 @@ export default function DetailModal() {
   const viewRawResponseTooltip = useTooltip()
   const downloadPartialImagesTooltip = useTooltip()
   const retryTooltip = useTooltip()
+  const downloadImageTooltip = useTooltip()
+  const downloadAllTooltip = useTooltip()
 
   const clearTextSelection = () => {
     const selection = window.getSelection()
@@ -143,22 +142,6 @@ export default function DetailModal() {
       cancelled = true
     }
   }, [currentOutputImageId])
-
-  useEffect(() => {
-    const updateImageLabelLeft = () => {
-      const panel = imagePanelRef.current
-      const image = mainImageRef.current
-      if (!panel || !image) return
-
-      const panelRect = panel.getBoundingClientRect()
-      const imageRect = image.getBoundingClientRect()
-      setImageLabelLeft(Math.max(8, imageRect.left - panelRect.left))
-    }
-
-    updateImageLabelLeft()
-    window.addEventListener('resize', updateImageLabelLeft)
-    return () => window.removeEventListener('resize', updateImageLabelLeft)
-  }, [currentOutputPreviewSrc])
 
   useEffect(() => {
     let cancelled = false
@@ -378,41 +361,56 @@ export default function DetailModal() {
         </div>
 
         {/* 左侧：图片 */}
-        <div ref={imagePanelRef} className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
+        <div className="md:w-1/2 w-full h-64 md:h-auto bg-gray-100 dark:bg-black/20 relative flex items-center justify-center flex-shrink-0 min-h-[16rem]">
           {task.status === 'done' && outputLen > 0 && (
             <div className="absolute right-3 top-[15px] z-20 flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleDownloadCurrentOutput}
-                className="flex items-center gap-1 bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-medium hover:bg-black/70 transition focus:outline-none focus:ring-1 focus:ring-white/50"
-              >
-                <DownloadIcon className="h-3.5 w-3.5" />
-                下载图片
-              </button>
-              {outputLen > 1 && (
+              <div className="relative group flex">
                 <button
                   type="button"
-                  onClick={handleDownloadAllOutputs}
-                  className="flex items-center gap-1 bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-medium hover:bg-black/70 transition focus:outline-none focus:ring-1 focus:ring-white/50"
+                  {...downloadImageTooltip.handlers}
+                  onClick={(e) => {
+                    downloadImageTooltip.handlers.onClick()
+                    handleDownloadCurrentOutput(e)
+                  }}
+                    className="flex items-center justify-center px-1.5 py-0.5 bg-black/50 text-white rounded backdrop-blur-sm hover:bg-black/70 transition focus:outline-none focus:ring-1 focus:ring-white/50"
+                  aria-label="下载图片"
                 >
-                  <DownloadIcon className="h-3.5 w-3.5" />
-                  下载全部
+                  <DownloadIcon className="h-4 w-4" />
                 </button>
+                <ViewportTooltip visible={downloadImageTooltip.visible} className="whitespace-nowrap">
+                  下载图片
+                </ViewportTooltip>
+              </div>
+              {outputLen > 1 && (
+                <div className="relative group flex">
+                  <button
+                    type="button"
+                    {...downloadAllTooltip.handlers}
+                    onClick={(e) => {
+                      downloadAllTooltip.handlers.onClick()
+                      handleDownloadAllOutputs(e)
+                    }}
+                    className="flex items-center justify-center pl-1.5 pr-2 py-0.5 gap-0.5 bg-black/50 text-white rounded backdrop-blur-sm hover:bg-black/70 transition focus:outline-none focus:ring-1 focus:ring-white/50"
+                    aria-label="下载全部"
+                  >
+                    <DownloadIcon className="h-4 w-4" />
+                    <span className="text-[9px] font-bold leading-none mt-[1px]">ALL</span>
+                  </button>
+                  <ViewportTooltip visible={downloadAllTooltip.visible} className="whitespace-nowrap">
+                    下载全部
+                  </ViewportTooltip>
+                </div>
               )}
             </div>
           )}
           {task.status === 'done' && outputLen > 0 && currentOutputPreviewSrc && (
             <>
               <img
-                ref={mainImageRef}
                 src={currentOutputPreviewSrc}
                 data-image-id={currentOutputImageId}
                 className="saveable-image max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain cursor-pointer"
-                onLoad={() => {
-                  const panel = imagePanelRef.current
-                  const image = mainImageRef.current
-                  if (!panel || !image) return
-
+                onLoad={(e) => {
+                  const image = e.currentTarget
                   if (currentOutputImageId && image.naturalWidth > 0 && image.naturalHeight > 0) {
                     setImageRatios((prev) => ({
                       ...prev,
@@ -423,17 +421,13 @@ export default function DetailModal() {
                       [currentOutputImageId]: `${image.naturalWidth}×${image.naturalHeight}`,
                     }))
                   }
-
-                  const panelRect = panel.getBoundingClientRect()
-                  const imageRect = image.getBoundingClientRect()
-                  setImageLabelLeft(Math.max(8, imageRect.left - panelRect.left))
                 }}
                 onClick={() =>
                   setLightboxImageId(task.outputImages[imageIndex], task.outputImages)
                 }
                 alt=""
               />
-              <div data-selectable-text className="absolute top-[15px] flex items-center gap-1.5" style={{ left: imageLabelLeft }}>
+              <div data-selectable-text className="absolute left-4 top-[15px] flex items-center gap-1.5">
                 {currentImageRatio && currentImageSize ? (
                   <>
                     <span className="bg-black/50 text-white text-xs px-2 py-0.5 rounded backdrop-blur-sm font-mono">
