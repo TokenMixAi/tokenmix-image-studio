@@ -5,7 +5,8 @@ export type AppMode = 'gallery' | 'agent'
 export type BuiltInApiProvider = 'openai' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
-export const DEFAULT_STREAM_PARTIAL_IMAGES = 0
+export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
+export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
 export type CustomProviderContentType = 'json' | 'multipart'
@@ -89,6 +90,9 @@ export interface AppSettings {
   reuseTaskApiProfileTemporarily: boolean
   alwaysShowRetryButton: boolean
   enterSubmit: boolean
+  agentScrollToBottomAfterSubmit: boolean
+  agentMaxToolRounds: number
+  agentWebSearch: boolean
   profiles: ApiProfile[]
   activeProfileId: string
 }
@@ -142,6 +146,8 @@ export interface TaskRecord {
   apiProfileId?: string
   /** 生成时使用的 Provider 名称 */
   apiProfileName?: string
+  /** 生成时使用的 API 模式 */
+  apiMode?: ApiMode
   /** 生成时使用的模型 ID */
   apiModel?: string
   /** fal.ai 队列请求 ID，用于连接断开后的结果恢复 */
@@ -190,6 +196,8 @@ export interface TaskRecord {
   agentMessageId?: string
   /** Agent 图像工具调用 ID */
   agentToolCallId?: string
+  /** Agent 批量图像工具调用 ID */
+  agentBatchCallId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
 }
@@ -205,6 +213,8 @@ export interface AgentMessage {
   content: string
   roundId: string
   inputImageIds?: string[]
+  maskTargetImageId?: string | null
+  maskImageId?: string | null
   outputTaskIds?: string[]
   createdAt: number
 }
@@ -217,6 +227,8 @@ export interface AgentRound {
   assistantMessageId?: string
   prompt: string
   inputImageIds: string[]
+  maskTargetImageId?: string | null
+  maskImageId?: string | null
   outputTaskIds: string[]
   responseId?: string
   responseOutput?: ResponsesOutputItem[]
@@ -303,10 +315,32 @@ export interface ResponsesOutputItem {
   id?: string
   type?: string
   status?: string
-  action?: string
+  action?: string | Record<string, unknown>
+  /** function_call: unique call id for sending back function_call_output */
+  call_id?: string
+  /** function_call: function name */
+  name?: string
+  /** function_call: JSON-encoded arguments string */
+  arguments?: string
+  /** function_call_output: JSON/text output string */
+  output?: string
+  annotations?: Array<{
+    type?: string
+    start_index?: number
+    end_index?: number
+    url?: string
+    title?: string
+  }>
   content?: Array<{
     type?: string
     text?: string
+    annotations?: Array<{
+      type?: string
+      start_index?: number
+      end_index?: number
+      url?: string
+      title?: string
+    }>
   }>
   result?: string | {
     b64_json?: string

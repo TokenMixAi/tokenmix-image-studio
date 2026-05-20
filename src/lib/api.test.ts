@@ -155,6 +155,100 @@ describe('callImageApi', () => {
     })
   })
 
+  it('does not expect revised prompts on official Images API stream completed events', async () => {
+    const streamBody = [
+      'data: {"created_at":1779112721,"type":"image_generation.completed","b64_json":"ZmluYWw=","background":"opaque","output_format":"jpeg","quality":"medium","sequence_number":0,"size":"1448x1086","usage":{"total_tokens":1569}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(streamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        streamImages: true,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          streamImages: true,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    } as any)
+
+    expect(result).toMatchObject({
+      images: ['data:image/png;base64,ZmluYWw='],
+      actualParams: {
+        output_format: 'jpeg',
+        quality: 'medium',
+        size: '1448x1086',
+      },
+      revisedPrompts: [undefined],
+    })
+  })
+
+  it('splits Images API streaming into concurrent single-image requests when n is greater than 1', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      const streamBody = [
+        'data: {"type":"image_generation.partial_image","partial_image_index":0,"b64_json":"cGFydGlhbA=="}',
+        '',
+        'data: {"type":"image_generation.completed","b64_json":"ZmluYWw=","size":"1024x1024","quality":"high","output_format":"png"}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n')
+      return new Response(streamBody, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    })
+    const partials: Array<{ image: string; requestIndex?: number }> = []
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        streamImages: true,
+        streamPartialImages: 1,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          streamImages: true,
+          streamPartialImages: 1,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS, n: 2 },
+      inputImageDataUrls: [],
+      onPartialImage: (partial: { image: string; requestIndex?: number }) => partials.push(partial),
+    } as any)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const [, init] of fetchMock.mock.calls) {
+      const body = JSON.parse(String((init as RequestInit).body))
+      expect(body.n).toBeUndefined()
+      expect(body.stream).toBe(true)
+      expect(body.partial_images).toBe(1)
+    }
+    expect(result.images).toHaveLength(2)
+    expect(result.images).toEqual([
+      'data:image/png;base64,ZmluYWw=',
+      'data:image/png;base64,ZmluYWw=',
+    ])
+    expect(partials.map((partial) => partial.requestIndex).sort()).toEqual([0, 1])
+    expect(partials.map((partial) => partial.image)).toEqual([
+      'data:image/png;base64,cGFydGlhbA==',
+      'data:image/png;base64,cGFydGlhbA==',
+    ])
+  })
+
   it('streams Responses API partial images and resolves the completed response image', async () => {
     const streamBody = [
       'data: {"type":"response.image_generation_call.partial_image","partial_image_index":0,"partial_image_b64":"cGFydGlhbA=="}',

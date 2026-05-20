@@ -5,10 +5,11 @@ import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
-import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageIds } from '../lib/downloadImages'
+import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
@@ -24,6 +25,7 @@ export default function DetailModal() {
   const settings = useStore((s) => s.settings)
   const dismissedCodexCliPrompts = useStore((s) => s.dismissedCodexCliPrompts)
   const streamPreviewSrc = useStore((s) => detailTaskId ? s.streamPreviews[detailTaskId] || '' : '')
+  const streamPreviewSlots = useStore((s) => detailTaskId ? s.streamPreviewSlots[detailTaskId] : undefined)
 
   const [imageIndex, setImageIndex] = useState(0)
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
@@ -34,6 +36,7 @@ export default function DetailModal() {
   const [now, setNow] = useState(Date.now())
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
+  const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
   const rawUrlsModalRef = useRef<HTMLDivElement>(null)
   const rawResponseModalRef = useRef<HTMLDivElement>(null)
@@ -58,6 +61,36 @@ export default function DetailModal() {
     () => tasks.find((t) => t.id === detailTaskId) ?? null,
     [tasks, detailTaskId],
   )
+  const streamPreviewItems = useMemo(() => {
+    const slotEntries = streamPreviewSlots
+      ? Object.entries(streamPreviewSlots)
+          .filter(([, src]) => Boolean(src))
+          .sort(([a], [b]) => Number(a) - Number(b))
+      : []
+    const count = Math.max(
+      task?.status === 'running' ? task.params.n : 0,
+      slotEntries.length ? Math.max(...slotEntries.map(([key]) => Number(key) + 1)) : 0,
+      streamPreviewSrc ? 1 : 0,
+    )
+    const byIndex = new Map(slotEntries.map(([key, src]) => [Number(key), src]))
+
+    return Array.from({ length: count }, (_, index) => ({
+      key: String(index),
+      src: byIndex.get(index) ?? (index === 0 ? streamPreviewSrc : ''),
+    }))
+  }, [task?.params.n, task?.status, streamPreviewSlots, streamPreviewSrc])
+  const activeStreamPreviewSrc = streamPreviewItems[imageIndex]?.src || ''
+
+  useEffect(() => {
+    setStreamPreviewLoaded(false)
+  }, [activeStreamPreviewSrc, detailTaskId, imageIndex])
+
+  useEffect(() => {
+    const count = task?.status === 'running'
+      ? streamPreviewItems.length
+      : task?.outputImages?.length ?? 0
+    if (count > 0 && imageIndex >= count) setImageIndex(count - 1)
+  }, [imageIndex, streamPreviewItems.length, task?.outputImages?.length, task?.status])
 
   useCloseOnEscape(Boolean(task), () => setDetailTaskId(null))
   usePreventBackgroundScroll(Boolean(task), [modalRef, rawUrlsModalRef, rawResponseModalRef])
@@ -115,33 +148,34 @@ export default function DetailModal() {
   const allInputImageIds = task?.inputImageIds ?? []
 
   useEffect(() => {
-    if (!currentOutputImageId) {
+    const outputImageIds = task?.outputImages ?? []
+    if (outputImageIds.length === 0) {
       setOutputPreviewSrcs({})
       return
     }
 
     let cancelled = false
-    const setOutputImage = (dataUrl: string) => {
-      if (!cancelled) setOutputPreviewSrcs({ [currentOutputImageId]: dataUrl })
+    const setOutputImage = (imageId: string, dataUrl: string) => {
+      if (!cancelled) setOutputPreviewSrcs((prev) => ({ ...prev, [imageId]: dataUrl }))
     }
 
-    const cached = getCachedImage(currentOutputImageId)
-    if (cached) {
-      setOutputImage(cached)
-    } else {
-      ensureImageCached(currentOutputImageId)
-        .then((dataUrl) => {
-          if (dataUrl) setOutputImage(dataUrl)
-        })
-        .catch(() => {
-          if (!cancelled) setOutputPreviewSrcs({})
-        })
+    for (const imageId of outputImageIds) {
+      const cached = getCachedImage(imageId)
+      if (cached) {
+        setOutputImage(imageId, cached)
+      } else {
+        ensureImageCached(imageId)
+          .then((dataUrl) => {
+            if (dataUrl) setOutputImage(imageId, dataUrl)
+          })
+          .catch(() => {})
+      }
     }
 
     return () => {
       cancelled = true
     }
-  }, [currentOutputImageId])
+  }, [task?.outputImages])
 
   useEffect(() => {
     let cancelled = false
@@ -164,6 +198,7 @@ export default function DetailModal() {
   if (!task) return null
 
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
+  const showPendingPrompt = isAgentTaskPromptPending(task)
   const isAgentEditTool = task.status === 'done' && String(task.agentToolAction ?? '').toLowerCase() === 'edit'
   const showReferenceSection = allInputImageIds.length > 0 || isAgentEditTool
 
@@ -177,7 +212,7 @@ export default function DetailModal() {
   const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
   const taskProvider = task.apiProvider
   const isOpenAiTask = (taskProvider ?? 'openai') === 'openai'
-  const showPromptWarning = Boolean(isOpenAiTask && currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt) && !hasHandledPromptWarning)
+  const showPromptWarning = Boolean(isOpenAiTask && task.apiMode === 'responses' && currentOutputImageId && (!currentRevisedPrompt || showRevisedPrompt) && !hasHandledPromptWarning)
   const taskProviderName = taskProvider === 'fal' ? 'fal.ai' : taskProvider ? 'OpenAI' : '未知'
   const taskProfileName = task.apiProfileName || '未知'
   const taskModel = task.apiModel || '未知'
@@ -185,6 +220,8 @@ export default function DetailModal() {
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
   const rawImageUrls = task.rawImageUrls ?? []
+  const streamPreviewLen = streamPreviewItems.length
+  const currentStreamPreviewSrc = activeStreamPreviewSrc
   const streamPartialImageIds = task.streamPartialImageIds ?? []
 
   const formatTime = (ts: number | null) => {
@@ -268,9 +305,7 @@ export default function DetailModal() {
     const src = imgId ? imageSrcs[imgId] : ''
     if (!src) return
     try {
-      const res = await fetch(src)
-      const blob = await res.blob()
-      await copyBlobToClipboard(blob)
+      await copyImageSourceToClipboard(src)
       showToast('参考图已复制', 'success')
     } catch (err) {
       console.error(err)
@@ -486,19 +521,54 @@ export default function DetailModal() {
                 </svg>
                 {formatDuration()}
               </div>
-              {task.status === 'running' && streamPreviewSrc && (
+              {task.status === 'running' && streamPreviewLen > 0 && (
                 <>
-                  <img
-                    src={streamPreviewSrc}
-                    className="max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain"
-                    alt=""
-                  />
-                  <span className="absolute top-4 right-4 bg-blue-500 text-white text-xs px-2 py-0.5 rounded flex items-center gap-1 font-medium">
-                    流式预览
-                  </span>
+                  {currentStreamPreviewSrc ? (
+                    <img
+                      src={currentStreamPreviewSrc}
+                      className={`max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain ${streamPreviewLoaded ? '' : 'hidden'}`}
+                      alt=""
+                      onLoad={() => setStreamPreviewLoaded(true)}
+                      onError={() => setStreamPreviewLoaded(false)}
+                    />
+                  ) : null}
+                  {(!currentStreamPreviewSrc || !streamPreviewLoaded) && (
+                    <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {streamPreviewLoaded && (
+                    <span className="absolute top-4 right-4 flex items-center gap-1 rounded bg-blue-500 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+                      流式预览
+                    </span>
+                  )}
+                  {streamPreviewLen > 1 && (
+                    <>
+                      <button
+                        onClick={() => setImageIndex((imageIndex - 1 + streamPreviewLen) % streamPreviewLen)}
+                        className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 transition"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => setImageIndex((imageIndex + 1) % streamPreviewLen)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 transition"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                      <span className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/50 text-white text-xs px-2 py-0.5 rounded-full">
+                        {imageIndex + 1} / {streamPreviewLen}
+                      </span>
+                    </>
+                  )}
                 </>
               )}
-              {task.status === 'running' && !streamPreviewSrc && (
+              {task.status === 'running' && streamPreviewLen === 0 && (
                 <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -653,7 +723,7 @@ export default function DetailModal() {
               <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                 输入内容
               </h3>
-              {task.prompt && (
+              {task.prompt && !showPendingPrompt && (
                 <button
                   onClick={handleCopyPrompt}
                   className="p-1 rounded text-gray-400 hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-white/[0.06] transition"
@@ -677,9 +747,16 @@ export default function DetailModal() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
-              {task.prompt || '(无提示词)'}
-            </p>
+            {showPendingPrompt ? (
+              <div className="mb-4 leading-relaxed">
+                <p className="text-sm text-gray-700 dark:text-gray-300">正在生成……</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">输入内容将在响应完成时接收</p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
+                {task.prompt || '(无提示词)'}
+              </p>
+            )}
             {showRevisedPrompt && currentRevisedPrompt && (
               <div className="mb-4">
                 <ActualValueBadge

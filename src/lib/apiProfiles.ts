@@ -12,7 +12,7 @@ import type {
   CustomProviderSubmitMapping,
   CustomProviderTemplate,
 } from '../types'
-import { DEFAULT_STREAM_PARTIAL_IMAGES } from '../types'
+import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
 
 const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'https://api.openai.com/v1'
@@ -57,6 +57,13 @@ export function normalizeStreamPartialImages(value: unknown, fallback: number | 
   const numeric = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(numeric)) return fallbackValue
   return Math.min(3, Math.max(0, Math.trunc(numeric)))
+}
+
+export function normalizeAgentMaxToolRounds(value: unknown, fallback: number | undefined = DEFAULT_AGENT_MAX_TOOL_ROUNDS): number {
+  const fallbackValue = fallback ?? DEFAULT_AGENT_MAX_TOOL_ROUNDS
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numeric)) return fallbackValue
+  return Math.min(50, Math.max(1, Math.trunc(numeric)))
 }
 
 function isCustomProviderTemplate(value: unknown): value is CustomProviderTemplate {
@@ -476,6 +483,9 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     reuseTaskApiProfileTemporarily: typeof record.reuseTaskApiProfileTemporarily === 'boolean' ? record.reuseTaskApiProfileTemporarily : false,
     alwaysShowRetryButton: typeof record.alwaysShowRetryButton === 'boolean' ? record.alwaysShowRetryButton : false,
     enterSubmit: typeof record.enterSubmit === 'boolean' ? record.enterSubmit : false,
+    agentScrollToBottomAfterSubmit: typeof record.agentScrollToBottomAfterSubmit === 'boolean' ? record.agentScrollToBottomAfterSubmit : true,
+    agentMaxToolRounds: normalizeAgentMaxToolRounds(record.agentMaxToolRounds),
+    agentWebSearch: typeof record.agentWebSearch === 'boolean' ? record.agentWebSearch : false,
     profiles,
     activeProfileId,
   }
@@ -758,4 +768,7 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   reuseTaskApiProfileTemporarily: false,
   alwaysShowRetryButton: false,
   enterSubmit: false,
+  agentScrollToBottomAfterSubmit: true,
+  agentMaxToolRounds: DEFAULT_AGENT_MAX_TOOL_ROUNDS,
+  agentWebSearch: false,
 })

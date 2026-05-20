@@ -531,11 +531,11 @@ describe('custom providers', () => {
 
   it('enables streaming by default and preserves partial image count', () => {
     expect(createDefaultOpenAIProfile().streamImages).toBe(true)
-    expect(createDefaultOpenAIProfile().streamPartialImages).toBe(0)
+    expect(createDefaultOpenAIProfile().streamPartialImages).toBe(1)
     expect(DEFAULT_SETTINGS.streamImages).toBe(true)
-    expect(DEFAULT_SETTINGS.streamPartialImages).toBe(0)
+    expect(DEFAULT_SETTINGS.streamPartialImages).toBe(1)
     expect(DEFAULT_SETTINGS.profiles[0].streamImages).toBe(true)
-    expect(DEFAULT_SETTINGS.profiles[0].streamPartialImages).toBe(0)
+    expect(DEFAULT_SETTINGS.profiles[0].streamPartialImages).toBe(1)
 
     const normalized = normalizeSettings({
       profiles: [
@@ -555,6 +555,12 @@ describe('custom providers', () => {
     })
 
     expect(clamped.profiles[0].streamPartialImages).toBe(3)
+  })
+
+  it('enables Agent submit auto scroll by default', () => {
+    expect(DEFAULT_SETTINGS.agentScrollToBottomAfterSubmit).toBe(true)
+    expect(normalizeSettings({}).agentScrollToBottomAfterSubmit).toBe(true)
+    expect(normalizeSettings({ agentScrollToBottomAfterSubmit: false }).agentScrollToBottomAfterSubmit).toBe(false)
   })
 
   it('restores OpenAI-compatible URL after switching through fal.ai', () => {

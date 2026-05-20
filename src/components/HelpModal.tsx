@@ -68,8 +68,8 @@ export default function HelpModal({ appMode, onClose }: HelpModalProps) {
                   <ul className="list-disc pl-4 space-y-2">
                     <li>需要使用 <strong className="text-blue-500 dark:text-blue-400 font-medium">Responses API</strong> 配置。</li>
                     <li>输入 <strong className="text-blue-500 dark:text-blue-400 font-medium">@</strong> 可引用参考图或前面轮次生成的图片。</li>
-                    <li>编辑某轮消息重新发送会产生可切换的分支。</li>
-                    <li>生成的图片会同步到画廊；删除对话不会删除画廊中的记录。</li>
+                    <li>编辑某轮消息重新发送，或重新生成某轮消息，会产生可切换的分支。</li>
+                    <li>生成的图片会同步到画廊；删除对话默认不会删除画廊中的记录。</li>
                   </ul>
                 </div>
               </section>

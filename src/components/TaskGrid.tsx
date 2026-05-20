@@ -300,12 +300,10 @@ export default function TaskGrid() {
                 const isCtrl = isMac ? e.metaKey : e.ctrlKey
                 if (isCtrl) {
                   useStore.getState().toggleTaskSelection(task.id)
-                } else if (selectedTaskIds.length > 0) {
-                  clearSelection()
-                  setDetailTaskId(task.id)
-                } else {
-                  setDetailTaskId(task.id)
+                  return
                 }
+
+                setDetailTaskId(task.id)
               }}
               onReuse={() => reuseConfig(task)}
               onEditOutputs={() => editOutputs(task)}

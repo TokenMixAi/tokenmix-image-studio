@@ -58,8 +58,12 @@ vi.mock('./lib/api', () => ({
     revisedPrompts: [],
   })),
 }))
+vi.mock('./lib/agentApi', () => ({
+  callAgentConversationTitleApi: vi.fn(async () => '标题'),
+  callAgentResponsesApi: vi.fn(() => new Promise(() => {})),
+}))
 import { clearImages, putImage } from './lib/db'
-import { editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, markInterruptedOpenAIRunningTasks, reuseConfig, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, markInterruptedOpenAIRunningTasks, regenerateAgentAssistantMessage, reuseConfig, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -217,8 +221,10 @@ describe('input persistence setting', () => {
   beforeEach(() => {
     useStore.setState({
       settings: { ...DEFAULT_SETTINGS },
+      appMode: 'gallery',
       prompt: 'prompt',
       inputImages: [imageA],
+      galleryInputDraft: null,
       dismissedCodexCliPrompts: [],
     })
   })
@@ -320,6 +326,308 @@ describe('agent conversation creation', () => {
     expect(state.agentConversations[state.agentConversations.length - 1]).toMatchObject({ id, createdAt: 3_000, updatedAt: 3_000, messages: [], rounds: [] })
     expect(state.activeAgentConversationId).toBe(id)
     now.mockRestore()
+  })
+})
+
+describe('agent draft lifecycle', () => {
+  const responsesProfile = createDefaultOpenAIProfile({ id: 'openai-responses', apiKey: 'openai-key', apiMode: 'responses' })
+  const draftState = {
+    prompt: `参考 ${getSelectedImageMentionLabel(0)} 生成`,
+    inputImages: [imageA],
+    maskDraft: {
+      targetImageId: imageA.id,
+      maskDataUrl: 'data:image/png;base64,mask',
+      updatedAt: 1,
+    },
+    maskEditorImageId: imageA.id,
+    agentEditingRoundId: 'round-a',
+  }
+
+  beforeEach(() => {
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [responsesProfile],
+        activeProfileId: responsesProfile.id,
+      }),
+      appMode: 'agent',
+      agentConversations: [
+        agentConversation({ id: 'conversation-a' }),
+        agentConversation({ id: 'conversation-b' }),
+      ],
+      activeAgentConversationId: 'conversation-a',
+      galleryInputDraft: null,
+      agentInputDrafts: {},
+      agentSidebarCollapsed: false,
+      agentAssetPanelCollapsed: false,
+      ...draftState,
+    })
+  })
+
+  it('clears visible input but keeps the agent draft when returning to gallery mode', () => {
+    useStore.getState().setAppMode('gallery')
+
+    const state = useStore.getState()
+    expect(state.appMode).toBe('gallery')
+    expect(state.prompt).toBe('')
+    expect(state.inputImages).toEqual([])
+    expect(state.maskDraft).toBeNull()
+    expect(state.maskEditorImageId).toBeNull()
+    expect(state.agentEditingRoundId).toBeNull()
+    expect(state.agentInputDrafts['conversation-a']).toMatchObject({
+      prompt: draftState.prompt,
+      inputImages: draftState.inputImages,
+      maskDraft: draftState.maskDraft,
+      maskEditorImageId: imageA.id,
+    })
+  })
+
+  it('restores the agent draft when switching back from gallery mode', () => {
+    useStore.getState().setAppMode('gallery')
+    useStore.getState().setAppMode('agent')
+
+    const state = useStore.getState()
+    expect(state.appMode).toBe('agent')
+    expect(state.prompt).toBe(draftState.prompt)
+    expect(state.inputImages).toEqual(draftState.inputImages)
+    expect(state.maskDraft).toEqual(draftState.maskDraft)
+    expect(state.maskEditorImageId).toBe(imageA.id)
+    expect(state.agentEditingRoundId).toBeNull()
+  })
+
+  it('keeps the gallery draft when switching into agent mode and back', () => {
+    const galleryPrompt = `画廊 ${getSelectedImageMentionLabel(0)} 草稿`
+    useStore.setState({
+      appMode: 'gallery',
+      prompt: galleryPrompt,
+      inputImages: [imageB],
+      maskDraft: null,
+      maskEditorImageId: null,
+      galleryInputDraft: null,
+      agentInputDrafts: {
+        'conversation-a': {
+          prompt: draftState.prompt,
+          inputImages: draftState.inputImages,
+          maskDraft: draftState.maskDraft,
+          maskEditorImageId: imageA.id,
+        },
+      },
+    })
+
+    useStore.getState().setAppMode('agent')
+
+    let state = useStore.getState()
+    expect(state.appMode).toBe('agent')
+    expect(state.galleryInputDraft).toMatchObject({ prompt: galleryPrompt, inputImages: [imageB] })
+    expect(state.prompt).toBe(draftState.prompt)
+
+    useStore.getState().setAppMode('gallery')
+
+    state = useStore.getState()
+    expect(state.appMode).toBe('gallery')
+    expect(state.prompt).toBe(galleryPrompt)
+    expect(state.inputImages).toEqual([imageB])
+  })
+
+  it('persists the gallery draft while agent mode is active', () => {
+    const galleryPrompt = 'gallery draft'
+    useStore.setState({
+      appMode: 'agent',
+      galleryInputDraft: {
+        prompt: galleryPrompt,
+        inputImages: [imageB],
+        maskDraft: null,
+        maskEditorImageId: null,
+      },
+    })
+
+    const persisted = getPersistedState(useStore.getState())
+
+    expect(persisted.prompt).toBe(galleryPrompt)
+    expect(persisted.inputImages).toEqual([{ id: imageB.id, dataUrl: '' }])
+  })
+
+  it('clears stale mentions in the visible input when switching conversations', () => {
+    useStore.getState().setActiveAgentConversationId('conversation-b')
+
+    const state = useStore.getState()
+    expect(state.activeAgentConversationId).toBe('conversation-b')
+    expect(state.prompt).toBe('')
+    expect(state.inputImages).toEqual([])
+    expect(state.maskDraft).toBeNull()
+    expect(state.maskEditorImageId).toBeNull()
+    expect(state.agentEditingRoundId).toBeNull()
+    expect(state.agentInputDrafts['conversation-a']?.prompt).toBe(draftState.prompt)
+  })
+
+  it('restores the previous conversation draft when switching back', () => {
+    useStore.getState().setActiveAgentConversationId('conversation-b')
+    useStore.getState().setActiveAgentConversationId('conversation-a')
+
+    const state = useStore.getState()
+    expect(state.activeAgentConversationId).toBe('conversation-a')
+    expect(state.prompt).toBe(draftState.prompt)
+    expect(state.inputImages).toEqual(draftState.inputImages)
+    expect(state.maskDraft).toEqual(draftState.maskDraft)
+    expect(state.maskEditorImageId).toBe(imageA.id)
+    expect(state.agentEditingRoundId).toBeNull()
+  })
+
+  it('keeps the current draft when selecting the already active conversation', () => {
+    useStore.getState().setActiveAgentConversationId('conversation-a')
+
+    const state = useStore.getState()
+    expect(state.prompt).toBe(draftState.prompt)
+    expect(state.inputImages).toEqual(draftState.inputImages)
+    expect(state.maskDraft).toEqual(draftState.maskDraft)
+    expect(state.maskEditorImageId).toBe(imageA.id)
+  })
+
+  it('persists agent drafts separately from the gallery input draft', () => {
+    const persisted = getPersistedState(useStore.getState())
+
+    expect(persisted).not.toHaveProperty('prompt')
+    expect(persisted.agentInputDrafts['conversation-a']).toMatchObject({
+      prompt: draftState.prompt,
+      inputImages: [{ id: imageA.id, dataUrl: '' }],
+      maskDraft: draftState.maskDraft,
+      maskEditorImageId: imageA.id,
+    })
+    expect(persisted.agentInputDrafts['conversation-a']?.updatedAt).toEqual(expect.any(Number))
+  })
+
+  it('removes stale agent drafts except the last active conversation', () => {
+    const now = 10 * 24 * 60 * 60 * 1000
+    const staleUpdatedAt = now - 3 * 24 * 60 * 60 * 1000 - 1
+    const recentUpdatedAt = now - 3 * 24 * 60 * 60 * 1000
+    const activeDraft = { prompt: 'active', inputImages: [], maskDraft: null, maskEditorImageId: null, updatedAt: staleUpdatedAt }
+    const staleDraft = { prompt: 'stale', inputImages: [], maskDraft: null, maskEditorImageId: null, updatedAt: staleUpdatedAt }
+    const recentDraft = { prompt: 'recent', inputImages: [], maskDraft: null, maskEditorImageId: null, updatedAt: recentUpdatedAt }
+
+    const cleaned = cleanStaleAgentInputDrafts({
+      'conversation-a': activeDraft,
+      'conversation-b': staleDraft,
+      'conversation-c': recentDraft,
+    }, 'conversation-a', now)
+
+    expect(cleaned).toEqual({
+      'conversation-a': activeDraft,
+      'conversation-c': recentDraft,
+    })
+  })
+
+})
+
+describe('agent assistant regeneration', () => {
+  const responsesProfile = createDefaultOpenAIProfile({ id: 'openai-responses', apiKey: 'openai-key', apiMode: 'responses' })
+
+  beforeEach(() => {
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [responsesProfile],
+        activeProfileId: responsesProfile.id,
+        alwaysShowRetryButton: false,
+      }),
+      params: { ...DEFAULT_PARAMS, n: 4 },
+      agentEditingRoundId: 'round-a',
+      agentConversations: [
+        agentConversation({
+          id: 'conversation-a',
+          activeRoundId: 'round-a',
+          rounds: [{
+            id: 'round-a',
+            index: 1,
+            parentRoundId: null,
+            userMessageId: 'user-a',
+            assistantMessageId: 'assistant-a',
+            prompt: '画一只猫',
+            inputImageIds: [imageA.id],
+            outputTaskIds: [],
+            status: 'done',
+            error: null,
+            createdAt: 1,
+            finishedAt: 2,
+          }],
+          messages: [
+            { id: 'user-a', role: 'user', content: '画一只猫', roundId: 'round-a', inputImageIds: [imageA.id], createdAt: 1 },
+            { id: 'assistant-a', role: 'assistant', content: '已完成。', roundId: 'round-a', createdAt: 2 },
+          ],
+        }),
+      ],
+      toast: null,
+      showToast: vi.fn(),
+      setConfirmDialog: vi.fn(),
+    })
+  })
+
+  it('creates a sibling round from the assistant message regardless of retry setting', async () => {
+    await regenerateAgentAssistantMessage('conversation-a', 'round-a')
+
+    const conversation = useStore.getState().agentConversations[0]
+    const newRound = conversation.rounds.find((round) => round.id !== 'round-a')
+    expect(newRound).toMatchObject({
+      index: 1,
+      parentRoundId: null,
+      prompt: '画一只猫',
+      inputImageIds: [imageA.id],
+      status: 'running',
+      outputTaskIds: [],
+    })
+    expect(conversation.activeRoundId).toBe(newRound?.id)
+    expect(conversation.messages).toContainEqual(expect.objectContaining({
+      role: 'user',
+      content: '画一只猫',
+      roundId: newRound?.id,
+      inputImageIds: [imageA.id],
+    }))
+    expect(useStore.getState().agentEditingRoundId).toBeNull()
+  })
+
+  it('overwrites the same round when regenerating an error assistant message', async () => {
+    useStore.setState({
+      agentConversations: [
+        agentConversation({
+          id: 'conversation-a',
+          activeRoundId: 'round-a',
+          rounds: [{
+            id: 'round-a',
+            index: 1,
+            parentRoundId: null,
+            userMessageId: 'user-a',
+            assistantMessageId: 'assistant-a',
+            prompt: '画一只猫',
+            inputImageIds: [imageA.id],
+            outputTaskIds: ['task-a'],
+            status: 'error',
+            error: '失败',
+            createdAt: 1,
+            finishedAt: 2,
+          }],
+          messages: [
+            { id: 'user-a', role: 'user', content: '画一只猫', roundId: 'round-a', inputImageIds: [imageA.id], createdAt: 1 },
+            { id: 'assistant-a', role: 'assistant', content: '请求失败：失败', roundId: 'round-a', outputTaskIds: ['task-a'], createdAt: 2 },
+          ],
+        }),
+      ],
+    })
+
+    await regenerateAgentAssistantMessage('conversation-a', 'round-a')
+
+    const conversation = useStore.getState().agentConversations[0]
+    expect(conversation.rounds).toHaveLength(1)
+    expect(conversation.activeRoundId).toBe('round-a')
+    expect(conversation.rounds[0]).toMatchObject({
+      id: 'round-a',
+      status: 'running',
+      error: null,
+      outputTaskIds: [],
+      finishedAt: null,
+    })
+    expect(conversation.messages.find((message) => message.id === 'assistant-a')).toMatchObject({
+      content: '',
+      outputTaskIds: [],
+    })
   })
 })
 

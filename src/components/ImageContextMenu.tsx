@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useStore, addImageFromUrl, ensureImageCached } from '../store'
-import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { copyImageSourceToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { downloadImageIds } from '../lib/downloadImages'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
@@ -85,10 +85,7 @@ export default function ImageContextMenu() {
     e.stopPropagation()
     setMenuInfo(null)
     try {
-      const src = await getOriginalImageSrc()
-      const res = await fetch(src)
-      const blob = await res.blob()
-      await copyBlobToClipboard(blob)
+      await copyImageSourceToClipboard(getOriginalImageSrc())
       showToast('图片已复制', 'success')
     } catch (err) {
       console.error(err)
@@ -123,7 +120,7 @@ export default function ImageContextMenu() {
     e.stopPropagation()
     const outputImageIds = menuInfo.outputImageIds
     setMenuInfo(null)
-    if (outputImageIds.length === 0) return
+    if (outputImageIds.length <= 1) return
 
     try {
       const result = await downloadImageIds(outputImageIds, 'outputs')
@@ -165,7 +162,8 @@ export default function ImageContextMenu() {
   let left = menuInfo.x
   let top = menuInfo.y
   const MENU_WIDTH = 120
-  const MENU_HEIGHT = menuInfo.outputImageIds.length > 0 ? 160 : 128
+  const showDownloadAll = menuInfo.outputImageIds.length > 1
+  const MENU_HEIGHT = showDownloadAll ? 160 : 128
 
   if (left + MENU_WIDTH > window.innerWidth) {
     left -= MENU_WIDTH
@@ -195,7 +193,7 @@ export default function ImageContextMenu() {
         <DownloadIcon className="w-4 h-4 flex-shrink-0" />
         下载
       </button>
-      {menuInfo.outputImageIds.length > 0 && (
+      {showDownloadAll && (
         <button
           onClick={handleDownloadAll}
           className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"

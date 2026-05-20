@@ -444,7 +444,7 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
 
 async function callImagesApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
-  if ((profile.codexCli || profile.streamImages) && n > 1) {
+  if ((profile.codexCli || (profile.streamImages && n > 1)) && n > 1) {
     return callImagesApiConcurrent(opts, profile, n, customProvider)
   }
 
@@ -461,7 +461,12 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
     },
   }
   const results = await Promise.allSettled(
-    Array.from({ length: n }).map(() => callImagesApiSingle(singleOpts, profile, customProvider)),
+    Array.from({ length: n }).map((_, requestIndex) => callImagesApiSingle({
+      ...singleOpts,
+      onPartialImage: opts.onPartialImage
+        ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
+        : undefined,
+    }, profile, customProvider)),
   )
 
   const successfulResults = results
@@ -923,7 +928,12 @@ async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile):
     return callResponsesImageApiSingle(opts, profile)
   }
 
-  const promises = Array.from({ length: n }).map(() => callResponsesImageApiSingle(opts, profile))
+  const promises = Array.from({ length: n }).map((_, requestIndex) => callResponsesImageApiSingle({
+    ...opts,
+    onPartialImage: opts.onPartialImage
+      ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
+      : undefined,
+  }, profile))
   const results = await Promise.allSettled(promises)
   
   const successfulResults = results

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore } from '../store'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react'
+import { removeMultipleTasks, useStore } from '../store'
 import type { AgentConversation } from '../types'
 import { useTooltip } from '../hooks/useTooltip'
 import { CloseIcon, EditIcon, TrashIcon } from './icons'
@@ -81,14 +81,21 @@ function getConversationSearchText(conversation: AgentConversation) {
   ].join('\n').toLocaleLowerCase()
 }
 
-export default function HistoryModal({ onClose }: { onClose: () => void }) {
+type HistoryModalProps = {
+  onClose: () => void
+  ignoreOutsideClickRef?: RefObject<HTMLElement | null>
+}
+
+export default function HistoryModal({ onClose, ignoreOutsideClickRef }: HistoryModalProps) {
   const conversations = useStore((s) => s.agentConversations)
   const activeConversationId = useStore((s) => s.activeAgentConversationId)
   const setActiveConversationId = useStore((s) => s.setActiveAgentConversationId)
   const renameConversation = useStore((s) => s.renameAgentConversation)
   const deleteConversation = useStore((s) => s.deleteAgentConversation)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const confirmDialogOpen = useStore((s) => Boolean(s.confirmDialog))
   const setAppMode = useStore((s) => s.setAppMode)
+  const tasks = useStore((s) => s.tasks)
   const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
 
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -139,11 +146,34 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
 
   const handleDelete = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
+    const targetConversation = conversations.find((item) => item.id === id) ?? null
+    const roundIds = new Set(targetConversation?.rounds.map((round) => round.id) ?? [])
+    const roundTaskIds = targetConversation?.rounds.flatMap((round) => round.outputTaskIds) ?? []
+    const relatedTasks = tasks.filter((task) =>
+      task.agentConversationId === id || Boolean(task.agentRoundId && roundIds.has(task.agentRoundId)),
+    )
+    const existingTaskIds = new Set(tasks.map((task) => task.id))
+    const relatedTaskIds = Array.from(new Set([...roundTaskIds, ...relatedTasks.map((task) => task.id)]))
+      .filter((taskId) => existingTaskIds.has(taskId))
+    const relatedTaskIdSet = new Set(relatedTaskIds)
+    const generatedImageCount = new Set(
+      tasks
+        .filter((task) => relatedTaskIdSet.has(task.id))
+        .flatMap((task) => task.outputImages || []),
+    ).size
+
     setConfirmDialog({
       title: '删除对话',
-      message: '确定要删除这个 Agent 对话吗？已同步到画廊的任务记录不会自动删除。',
-      action: () => {
+      message: '确定要删除这个 Agent 对话吗？',
+      checkbox: generatedImageCount > 0
+        ? {
+            label: `同时删除对话中生成的图片（${generatedImageCount} 张）`,
+            tone: 'danger',
+          }
+        : undefined,
+      action: async (deleteGeneratedImages = false) => {
         deleteConversation(id)
+        if (deleteGeneratedImages && relatedTaskIds.length > 0) await removeMultipleTasks(relatedTaskIds)
         if (conversations.length <= 1) {
           onClose()
         }
@@ -155,6 +185,8 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const handleInteract = (e: MouseEvent | TouchEvent) => {
+      if (confirmDialogOpen) return
+      if (ignoreOutsideClickRef?.current?.contains(e.target as Node)) return
       if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
         onClose()
       }
@@ -165,7 +197,7 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
       document.removeEventListener('mousedown', handleInteract, { capture: true })
       document.removeEventListener('touchstart', handleInteract, { capture: true })
     }
-  }, [onClose])
+  }, [confirmDialogOpen, ignoreOutsideClickRef, onClose])
 
   // Group by time
   const groups: Record<string, AgentConversation[]> = {}
@@ -178,7 +210,7 @@ export default function HistoryModal({ onClose }: { onClose: () => void }) {
   return (
     <div 
       ref={modalRef}
-      className="absolute top-12 left-0 w-80 sm:w-96 max-w-[calc(100vw-2rem)] max-h-[70vh] bg-[#2d2d2d] dark:bg-[#1c1c1e] rounded-xl shadow-2xl overflow-hidden flex flex-col border border-white/10 z-50 text-gray-200"
+      className="absolute top-12 left-0 w-80 sm:w-96 max-w-[calc(100vw-2rem)] max-h-[70vh] bg-[#2d2d2d] dark:bg-[#1c1c1e] rounded-xl shadow-2xl overflow-hidden flex flex-col border border-white/10 z-50 text-gray-200 animate-dropdown-down"
     >
       <div className="flex items-center justify-between p-3 border-b border-white/10 shrink-0">
         <input 

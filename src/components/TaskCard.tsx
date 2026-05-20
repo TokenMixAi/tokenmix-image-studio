@@ -4,6 +4,7 @@ import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTa
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
+import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { CodeIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -69,10 +70,11 @@ export default function TaskCard({
   const [coverRatio, setCoverRatio] = useState<string>('')
   const [coverSize, setCoverSize] = useState<string>('')
   const [now, setNow] = useState(Date.now())
-  const [swipeOffset, setSwipeOffset] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
   const [swipeStartedSelected, setSwipeStartedSelected] = useState(false)
   const [swipeActionActive, setSwipeActionActive] = useState(false)
+  const [swipeDirection, setSwipeDirection] = useState<-1 | 0 | 1>(0)
+  const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
   const streamPreviewSrc = useStore((s) => s.streamPreviews[task.id] || '')
@@ -80,6 +82,48 @@ export default function TaskCard({
   const swipeResetTimerRef = useRef<number | null>(null)
   const suppressClickUntilRef = useRef(0)
   const horizontalSwipeRef = useRef(false)
+  const swipeDirectionRef = useRef<-1 | 0 | 1>(0)
+  const swipeActionActiveRef = useRef(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const swipeOffsetRef = useRef(0)
+  const pendingSwipeOffsetRef = useRef(0)
+  const swipeFrameRef = useRef<number | null>(null)
+
+  const updateSwipeDirection = (nextDirection: -1 | 0 | 1) => {
+    if (swipeDirectionRef.current === nextDirection) return
+    swipeDirectionRef.current = nextDirection
+    setSwipeDirection(nextDirection)
+  }
+
+  const updateSwipeActionActive = (nextActive: boolean) => {
+    if (swipeActionActiveRef.current === nextActive) return
+    swipeActionActiveRef.current = nextActive
+    setSwipeActionActive(nextActive)
+  }
+
+  const applySwipeOffset = (offset: number) => {
+    swipeOffsetRef.current = offset
+    if (cardRef.current) {
+      cardRef.current.style.transform = offset ? `translateX(${offset}px)` : ''
+    }
+  }
+
+  const cancelSwipeFrame = () => {
+    if (swipeFrameRef.current != null) {
+      window.cancelAnimationFrame(swipeFrameRef.current)
+      swipeFrameRef.current = null
+    }
+  }
+
+  const scheduleSwipeOffset = (offset: number) => {
+    if (swipeFrameRef.current == null && swipeOffsetRef.current === offset) return
+    pendingSwipeOffsetRef.current = offset
+    if (swipeFrameRef.current != null) return
+    swipeFrameRef.current = window.requestAnimationFrame(() => {
+      swipeFrameRef.current = null
+      applySwipeOffset(pendingSwipeOffsetRef.current)
+    })
+  }
 
   const isTagScrollTarget = (target: EventTarget | null) => {
     return target instanceof Element && Boolean(target.closest('[data-tag-scroll-area]'))
@@ -90,8 +134,10 @@ export default function TaskCard({
       touchStartRef.current = null
       horizontalSwipeRef.current = false
       setIsSwiping(false)
-      setSwipeOffset(0)
-      setSwipeActionActive(false)
+      cancelSwipeFrame()
+      applySwipeOffset(0)
+      updateSwipeDirection(0)
+      updateSwipeActionActive(false)
       return
     }
 
@@ -102,7 +148,10 @@ export default function TaskCard({
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
     horizontalSwipeRef.current = false
     setSwipeStartedSelected(Boolean(isSelected))
-    setSwipeActionActive(false)
+    updateSwipeActionActive(false)
+    updateSwipeDirection(0)
+    cancelSwipeFrame()
+    applySwipeOffset(0)
     setIsSwiping(true)
   }
 
@@ -118,8 +167,11 @@ export default function TaskCard({
       e.preventDefault()
       // 限制滑动距离，例如最大 60px
       const boundedOffset = Math.max(-60, Math.min(60, deltaX))
-      setSwipeOffset(boundedOffset)
-      setSwipeActionActive(Math.abs(deltaX) >= 40)
+      const nextDirection = boundedOffset > 0 ? 1 : boundedOffset < 0 ? -1 : 0
+      const nextActionActive = Math.abs(deltaX) >= 40
+      scheduleSwipeOffset(boundedOffset)
+      updateSwipeDirection(nextDirection)
+      updateSwipeActionActive(nextActionActive)
     }
   }
 
@@ -128,22 +180,24 @@ export default function TaskCard({
       touchStartRef.current = null
       horizontalSwipeRef.current = false
       setIsSwiping(false)
-      setSwipeOffset(0)
-      setSwipeActionActive(false)
+      cancelSwipeFrame()
+      updateSwipeDirection(0)
+      updateSwipeActionActive(false)
       return
     }
 
     setIsSwiping(false)
-    setSwipeOffset(0)
+    cancelSwipeFrame()
+    updateSwipeDirection(0)
     
     if (!touchStartRef.current) return
     const deltaX = e.changedTouches[0].clientX - touchStartRef.current.x
     touchStartRef.current = null
     const isSwipeAction = horizontalSwipeRef.current && Math.abs(deltaX) > 40
     horizontalSwipeRef.current = false
-    setSwipeActionActive(isSwipeAction)
+    updateSwipeActionActive(isSwipeAction)
     swipeResetTimerRef.current = window.setTimeout(() => {
-      setSwipeActionActive(false)
+      updateSwipeActionActive(false)
       swipeResetTimerRef.current = null
     }, 220)
 
@@ -160,15 +214,27 @@ export default function TaskCard({
     touchStartRef.current = null
     horizontalSwipeRef.current = false
     setIsSwiping(false)
-    setSwipeOffset(0)
-    setSwipeActionActive(false)
+    cancelSwipeFrame()
+    updateSwipeDirection(0)
+    updateSwipeActionActive(false)
   }
 
   useEffect(() => () => {
     if (swipeResetTimerRef.current != null) {
       window.clearTimeout(swipeResetTimerRef.current)
     }
+    cancelSwipeFrame()
   }, [])
+
+  useEffect(() => {
+    if (!isSwiping) {
+      applySwipeOffset(0)
+    }
+  }, [isSwiping])
+
+  useEffect(() => {
+    setStreamPreviewLoaded(false)
+  }, [streamPreviewSrc, task.id])
 
   // 定时更新运行中任务的计时
   useEffect(() => {
@@ -226,8 +292,7 @@ export default function TaskCard({
     const ss = String(seconds % 60).padStart(2, '0')
     return `${mm}:${ss}`
   })()
-  const isSwipeReady = Math.abs(swipeOffset) >= 40
-  const showSwipeAction = isSwipeReady || swipeActionActive
+  const showSwipeAction = swipeActionActive
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
   const showRunningTimer = task.status === 'running' || isFalReconnecting || isCustomReconnecting
@@ -248,19 +313,21 @@ export default function TaskCard({
 
   const nDisplay = getParamDisplay(task, 'n')
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
+  const showPendingPrompt = isAgentTaskPromptPending(task)
   const showN = !isAgentTask && (task.params.n > 1 || nDisplay.isMismatch)
 
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
+  const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
 
   return (
     <div className="relative rounded-xl">
       {/* 侧滑底图 */}
       <div
         className={`absolute inset-0 rounded-xl flex items-center transition-opacity duration-200 pointer-events-none ${
-          isSwiping || swipeOffset || swipeActionActive ? 'opacity-100' : 'opacity-0'
+          isSwiping || swipeDirection !== 0 || swipeActionActive ? 'opacity-100' : 'opacity-0'
         } ${swipeBgClass} ${
-          swipeOffset > 0 ? 'justify-start pl-6' : 'justify-end pr-6'
+          swipeDirection > 0 ? 'justify-start pl-6' : 'justify-end pr-6'
         }`}
       >
         <svg className={`w-8 h-8 transition-transform duration-150 ${showSwipeAction ? 'scale-110 text-white' : 'scale-90 text-white/60'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -273,7 +340,8 @@ export default function TaskCard({
       </div>
 
       <div
-        className={`relative bg-white dark:bg-gray-900 rounded-xl border overflow-hidden cursor-pointer duration-200 hover:shadow-lg dark:hover:bg-gray-800/80 ${
+        ref={cardRef}
+        className={`relative bg-white dark:bg-gray-900 rounded-xl border overflow-hidden cursor-pointer touch-pan-y will-change-transform duration-200 hover:shadow-lg dark:hover:bg-gray-800/80 ${
           !isSwiping ? 'transition-[box-shadow,border-color,background-color,transform]' : 'transition-[box-shadow,border-color,background-color]'
         } ${
           task.status === 'running'
@@ -282,9 +350,6 @@ export default function TaskCard({
             ? 'border-blue-500 shadow-md ring-2 ring-blue-500/50'
             : 'border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.18]'
         }`}
-        style={{
-          transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined,
-        }}
         onClick={(e) => {
           if (Date.now() < suppressClickUntilRef.current) {
             e.preventDefault()
@@ -332,15 +397,19 @@ export default function TaskCard({
             <>
               <img
                 src={streamPreviewSrc}
-                className="h-full w-full object-cover"
+                className={`h-full w-full object-cover ${streamPreviewLoaded ? '' : 'hidden'}`}
                 alt=""
+                onLoad={() => setStreamPreviewLoaded(true)}
+                onError={() => setStreamPreviewLoaded(false)}
               />
-              <span className="absolute top-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500 text-white text-[10px] sm:text-xs">
-                预览
-              </span>
+              {streamPreviewLoaded && (
+                <span className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm sm:text-xs">
+                  预览
+                </span>
+              )}
             </>
           )}
-          {task.status === 'running' && !streamPreviewSrc && (
+          {task.status === 'running' && (!streamPreviewSrc || !streamPreviewLoaded) && (
             <div className="flex flex-col items-center gap-2">
               <svg
                 className="w-8 h-8 text-blue-400 animate-spin"
@@ -387,7 +456,7 @@ export default function TaskCard({
           {task.status === 'error' && !isFalReconnecting && (
             <div className="flex flex-col items-center gap-1 px-2">
               <svg
-                className="w-7 h-7 text-red-400"
+                className={`w-7 h-7 ${isInterrupted ? 'text-yellow-400' : 'text-red-400'}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -399,8 +468,8 @@ export default function TaskCard({
                   d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-              <span className="text-xs text-red-400 text-center leading-tight">
-                失败
+              <span className={`text-xs text-center leading-tight ${isInterrupted ? 'text-yellow-500' : 'text-red-400'}`}>
+                {isInterrupted ? '已停止' : '失败'}
               </span>
             </div>
           )}
@@ -461,9 +530,16 @@ export default function TaskCard({
         {/* 右侧信息区域 */}
         <div className="flex-1 p-3 flex flex-col min-w-0">
           <div className="flex-1 min-h-0 mb-2 overflow-hidden">
-            <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
-              {task.prompt || '(无提示词)'}
-            </p>
+            {showPendingPrompt ? (
+              <div className="leading-relaxed">
+                <p className="text-sm text-gray-700 dark:text-gray-300">正在生成……</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">输入内容将在响应完成时接收</p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
+                {task.prompt || '(无提示词)'}
+              </p>
+            )}
           </div>
           <div className="mt-auto flex flex-col gap-1.5">
             {/* 参数与信息：横向滚动 */}

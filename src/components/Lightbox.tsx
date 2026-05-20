@@ -173,6 +173,7 @@ interface LightboxInnerProps {
 /** 内部组件：保证挂载时 DOM 已经存在，所有 ref / effect 都可靠 */
 function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, currentIndex, total, onPrev, onNext }: LightboxInnerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const openedAtRef = useRef(Date.now())
 
   // 用 ref 追踪最新变换，避免闭包过期
   const scaleRef = useRef(1)
@@ -215,6 +216,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
   const touchIntentRef = useRef<TouchIntent>('none')
   const touchMovedRef = useRef(false)
   const swipeHandledRef = useRef(false)
+  const doubleTapHandledRef = useRef(false)
   const closeTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 判断本次 mousedown → mouseup 是否发生了拖拽，用于区分点击和拖拽
@@ -224,6 +226,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
 
   // 切换图片时重置缩放
   useEffect(() => {
+    openedAtRef.current = Date.now()
     scaleRef.current = 1
     txRef.current = 0
     tyRef.current = 0
@@ -369,6 +372,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
   // ====== 鼠标双击缩放 ======
   const onDoubleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
+    if (Date.now() - openedAtRef.current < DOUBLE_TAP_DELAY) return
     if (scaleRef.current > 1) {
       apply(1, 0, 0)
     } else {
@@ -426,6 +430,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
           e.preventDefault()
           cancelCloseTap()
           suppressNextClickBriefly()
+          doubleTapHandledRef.current = true
           if (scaleRef.current > 1) {
             apply(1, 0, 0)
           } else {
@@ -504,6 +509,12 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
           return
         }
 
+        if (doubleTapHandledRef.current) {
+          doubleTapHandledRef.current = false
+          resetTouchGesture()
+          return
+        }
+
         const start = touchStartRef.current
         const changed = e.changedTouches[0]
         const dx = start && changed ? changed.clientX - start.x : 0
@@ -534,8 +545,19 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
         // 触摸设备会在 touchend 后补发 click，这里接管点按，避免首个点按关闭导致双击缩放失效。
         suppressNextClickBriefly()
 
-        // 单击关闭：仅点击图片和控件外立即关闭；图片上的单击保留给双击缩放。
-        if (!touchStartedOnImageRef.current && !touchStartedOnControlRef.current) {
+        // 单击关闭：未缩放时图片也可点按关闭；图片上的关闭延迟到双击窗口后，避免破坏双击缩放。
+        if (touchStartedOnControlRef.current) {
+          resetTouchGesture()
+          return
+        }
+        if (scaleRef.current <= 1 && touchStartedOnImageRef.current) {
+          cancelCloseTap()
+          closeTapTimerRef.current = setTimeout(() => {
+            closeTapTimerRef.current = null
+            suppressGlobalClicks()
+            onClose()
+          }, DOUBLE_TAP_DELAY)
+        } else if (!touchStartedOnImageRef.current) {
           cancelCloseTap()
           suppressGlobalClicks()
           if (e.cancelable) e.preventDefault()
@@ -549,6 +571,7 @@ function LightboxInner({ src, imageId, maskPreviewSrc, onClose, showNav, current
       cancelCloseTap()
       tapRef.current = { time: 0, x: 0, y: 0 }
       hadMultiTouchRef.current = false
+      doubleTapHandledRef.current = false
       pinchRef.current.active = false
       dragRef.current.active = false
       resetTouchGesture()

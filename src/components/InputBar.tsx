@@ -4,12 +4,13 @@ import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFr
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
-import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
+import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, getSelectedTextMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { collectAgentRoundOutputImages } from '../lib/agentImageReferences'
+import { useHintTooltip } from '../hooks/useHintTooltip'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
@@ -175,6 +176,18 @@ function getContentEditablePlainText(el: HTMLElement): string {
   return text.replace(/\r\n?/g, '\n')
 }
 
+function escapeHtml(text: string) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function getMentionTagHtml(text: string) {
+  return `<span contenteditable="false" class="mention-tag" data-mention-text="${escapeHtml(getSelectedTextMentionLabel(text))}">${escapeHtml(text)}</span>`
+}
+
 function syncMentionTagSelection(el: HTMLElement) {
   const tags = el.querySelectorAll<HTMLElement>('.mention-tag')
   const sel = window.getSelection()
@@ -244,6 +257,68 @@ function setContentEditableCursor(el: HTMLElement, offset: number) {
     sel.removeAllRanges()
     sel.addRange(range)
   }
+}
+
+function setContentEditableSelection(el: HTMLElement, start: number, end: number) {
+  const sel = window.getSelection()
+  if (!sel) return
+
+  type Boundary =
+    | { type: 'offset'; node: Node; offset: number }
+    | { type: 'before'; element: Element }
+    | { type: 'after'; element: Element }
+
+  const findBoundary = (targetOffset: number, edge: 'start' | 'end'): Boundary => {
+    let remaining = targetOffset
+    let lastBoundary: Boundary = { type: 'offset', node: el, offset: 0 }
+
+    const walk = (current: Node): Boundary | null => {
+      if (current.nodeType === Node.TEXT_NODE) {
+        const node = current as Text
+        lastBoundary = { type: 'offset', node, offset: node.length }
+        if (remaining <= node.length) return { type: 'offset', node, offset: remaining }
+        remaining -= node.length
+        return null
+      }
+
+      if (current instanceof HTMLElement && current.classList.contains('mention-tag')) {
+        const length = getMentionTagTextLength(current)
+        if (remaining <= 0) return { type: 'before', element: current }
+        if (remaining < length) return edge === 'start' ? { type: 'before', element: current } : { type: 'after', element: current }
+        if (remaining === length) return { type: 'after', element: current }
+        remaining -= length
+        return null
+      }
+
+      for (const child of Array.from(current.childNodes)) {
+        const boundary = walk(child)
+        if (boundary) return boundary
+      }
+      return null
+    }
+
+    return walk(el) ?? lastBoundary
+  }
+
+  const applyBoundary = (range: Range, boundary: Boundary, target: 'start' | 'end') => {
+    if (boundary.type === 'before') {
+      target === 'start' ? range.setStartBefore(boundary.element) : range.setEndBefore(boundary.element)
+      return
+    }
+    if (boundary.type === 'after') {
+      target === 'start' ? range.setStartAfter(boundary.element) : range.setEndAfter(boundary.element)
+      return
+    }
+    target === 'start' ? range.setStart(boundary.node, boundary.offset) : range.setEnd(boundary.node, boundary.offset)
+  }
+
+  const startBoundary = findBoundary(start, 'start')
+  const endBoundary = findBoundary(end, 'end')
+  const range = document.createRange()
+  applyBoundary(range, startBoundary, 'start')
+  applyBoundary(range, endBoundary, 'end')
+  sel.removeAllRanges()
+  sel.addRange(range)
 }
 
 /** 通用悬浮气泡提示 */
@@ -444,6 +519,7 @@ export default function InputBar() {
   const moveInputImage = useStore((s) => s.moveInputImage)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef<HTMLDivElement>(null)
@@ -452,13 +528,10 @@ export default function InputBar() {
   const [isDragging, setIsDragging] = useState(false)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
-  const [compressionHintVisible, setCompressionHintVisible] = useState(false)
-  const [moderationHintVisible, setModerationHintVisible] = useState(false)
-  const [sizeHintVisible, setSizeHintVisible] = useState(false)
-  const [qualityHintVisible, setQualityHintVisible] = useState(false)
   const [imageHintId, setImageHintId] = useState<string | null>(null)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
+  const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
   const [imageDragIndex, setImageDragIndex] = useState<number | null>(null)
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
@@ -511,19 +584,12 @@ export default function InputBar() {
       document.documentElement.style.removeProperty('--input-bar-clearance')
     }
   }, [updateInputBarClearance])
-  const compressionHintTimerRef = useRef<number | null>(null)
-  const moderationHintTimerRef = useRef<number | null>(null)
-  const sizeHintTimerRef = useRef<number | null>(null)
-  const qualityHintTimerRef = useRef<number | null>(null)
   const imageHintTimerRef = useRef<number | null>(null)
-  const nLimitHintTimerRef = useRef<number | null>(null)
-  const nHintTouchTimerRef = useRef<number | null>(null)
   const [outputCompressionInput, setOutputCompressionInput] = useState(
     params.output_compression == null ? '' : String(params.output_compression),
   )
   const [nInput, setNInput] = useState(String(params.n))
   const [nInputFocused, setNInputFocused] = useState(false)
-  const [nLimitHintVisible, setNLimitHintVisible] = useState(false)
   const dragCounter = useRef(0)
   const isMobile = useIsMobile()
 
@@ -544,6 +610,13 @@ export default function InputBar() {
   ), [activeProfile.id, currentActiveProfile.id, settings])
   const hasSubmitApiConfig = Boolean(activeProfile.apiKey)
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
+  const submitButtonAriaLabel = activeAgentIsRunning
+    ? '停止生成'
+    : hasSubmitApiConfig
+    ? maskDraft ? '遮罩编辑' : '生成图像'
+    : '请先配置 API'
+  const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
+  const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
@@ -554,6 +627,15 @@ export default function InputBar() {
   const stopActiveAgentResponse = useCallback(() => {
     stopAgentResponse(activeAgentConversationId)
   }, [activeAgentConversationId])
+  const syncPromptFromContentEditable = useCallback(() => {
+    const el = textareaRef.current
+    if (!el) return
+    isUserInputRef.current = true
+    const range = getContentEditableSelection(el)
+    setCursorPos(range.start)
+    syncMentionTagSelection(el)
+    setPrompt(getContentEditablePlainText(el))
+  }, [setPrompt])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent' && activeProfile.provider === 'openai' && activeProfile.apiMode === 'responses'
@@ -561,6 +643,9 @@ export default function InputBar() {
   const compressionDisabled = params.output_format === 'png' || isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
+  const nDraftValue = Number(nInput)
+  const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
+  const streamConcurrentByN = activeProfile.provider === 'openai' && activeProfile.streamImages === true && !agentAutoImageCount && effectiveNValue > 1
   const nLimitHintText = agentAutoImageCount
     ? 'Agent 模式下数量由模型根据提示词自动决定'
     : isFalProvider
@@ -569,6 +654,7 @@ export default function InputBar() {
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
+
   const qualityOptions = isFalProvider
     ? [
         { label: 'low', value: 'low' },
@@ -582,6 +668,12 @@ export default function InputBar() {
         { label: 'high', value: 'high' },
       ]
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
+  const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
+  const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
+  const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
+  const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage })
+  const qualityHint = useHintTooltip({ enabled: () => settings.codexCli || isFalProvider })
+  const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
   const maskTargetImage = maskDraft
     ? inputImages.find((img) => img.id === maskDraft.targetImageId) ?? null
     : null
@@ -638,6 +730,16 @@ export default function InputBar() {
     setAtImageMenuIndex(0)
     if (!query) return
 
+    const mentionText = option.type === 'input' ? getImageMentionLabel(option.imageIndex) : option.insertText
+    if (el) {
+      el.focus()
+      setContentEditableSelection(el, query.start, cursor)
+      if (document.execCommand('insertHTML', false, getMentionTagHtml(mentionText))) {
+        syncPromptFromContentEditable()
+        return
+      }
+    }
+
     const next = option.type === 'input'
       ? insertImageMentionAtVisibleRange(prompt, query.start, cursor, option.imageIndex)
       : insertTextMentionAtVisibleRange(prompt, query.start, cursor, option.insertText)
@@ -649,17 +751,26 @@ export default function InputBar() {
         setContentEditableCursor(textareaRef.current, next.cursor)
       }
     }, 0)
-  }, [atImageSourceCount, prompt, setPrompt])
+  }, [atImageSourceCount, prompt, setPrompt, syncPromptFromContentEditable])
 
 
 
   const insertPromptTextAtSelection = useCallback((text: string) => {
     const el = textareaRef.current
+    if (el) {
+      el.focus()
+      if (document.execCommand('insertText', false, text)) {
+        syncPromptFromContentEditable()
+        return
+      }
+    }
+
     const selection = el ? getContentEditableSelection(el) : { start: prompt.length, end: prompt.length }
     const promptStart = getPromptIndexFromVisibleIndex(prompt, selection.start)
     const promptEnd = getPromptIndexFromVisibleIndex(prompt, selection.end)
     const nextPrompt = `${prompt.slice(0, promptStart)}${text}${prompt.slice(promptEnd)}`
     const nextCursor = selection.start + text.length
+    isUserInputRef.current = false
     setPrompt(nextPrompt)
     window.setTimeout(() => {
       if (textareaRef.current) {
@@ -667,7 +778,7 @@ export default function InputBar() {
         setContentEditableCursor(textareaRef.current, nextCursor)
       }
     }, 0)
-  }, [prompt, setPrompt])
+  }, [prompt, setPrompt, syncPromptFromContentEditable])
 
   useEffect(() => {
     setOutputCompressionInput(
@@ -688,29 +799,10 @@ export default function InputBar() {
   }, [inputImages.length, params, effectiveSettings, setParams])
 
   useEffect(() => () => {
-    if (compressionHintTimerRef.current != null) {
-      window.clearTimeout(compressionHintTimerRef.current)
-    }
-    if (moderationHintTimerRef.current != null) {
-      window.clearTimeout(moderationHintTimerRef.current)
-    }
-    if (qualityHintTimerRef.current != null) {
-      window.clearTimeout(qualityHintTimerRef.current)
-    }
-    if (sizeHintTimerRef.current != null) {
-      window.clearTimeout(sizeHintTimerRef.current)
-    }
     if (imageHintTimerRef.current != null) {
       window.clearTimeout(imageHintTimerRef.current)
     }
     imageHintReleaseRef.current?.()
-    if (nLimitHintTimerRef.current != null) {
-      window.clearTimeout(nLimitHintTimerRef.current)
-    }
-    if (nHintTouchTimerRef.current != null) {
-      window.clearTimeout(nHintTouchTimerRef.current)
-      nHintTouchTimerRef.current = null
-    }
   }, [])
 
   useEffect(() => {
@@ -751,11 +843,7 @@ export default function InputBar() {
   }, [outputCompressionInput, params.output_compression, setParams])
 
   const commitN = useCallback(() => {
-    setNLimitHintVisible(false)
-    if (nLimitHintTimerRef.current != null) {
-      window.clearTimeout(nLimitHintTimerRef.current)
-      nLimitHintTimerRef.current = null
-    }
+    nLimitHint.hide()
     if (agentAutoImageCount) {
       setNInput('auto')
       return
@@ -766,46 +854,28 @@ export default function InputBar() {
     const clampedValue = Math.min(outputImageLimit, Math.max(1, normalizedValue))
     setNInput(String(clampedValue))
     setParams({ n: clampedValue })
-  }, [agentAutoImageCount, nInput, outputImageLimit, params.n, setParams])
+  }, [agentAutoImageCount, nInput, nLimitHint, outputImageLimit, params.n, setParams])
 
   const showNLimitHint = useCallback(() => {
-    setNLimitHintVisible(true)
-    if (nLimitHintTimerRef.current != null) {
-      window.clearTimeout(nLimitHintTimerRef.current)
-    }
-    nLimitHintTimerRef.current = window.setTimeout(() => {
-      setNLimitHintVisible(false)
-      nLimitHintTimerRef.current = null
-    }, 2000)
-  }, [])
+    nLimitHint.show()
+  }, [nLimitHint])
 
   const hideNLimitHint = useCallback(() => {
-    setNLimitHintVisible(false)
-    if (nLimitHintTimerRef.current != null) {
-      window.clearTimeout(nLimitHintTimerRef.current)
-      nLimitHintTimerRef.current = null
-    }
-  }, [])
+    nLimitHint.hide()
+  }, [nLimitHint])
 
   const showAgentNHint = useCallback(() => {
     if (agentAutoImageCount) showNLimitHint()
   }, [agentAutoImageCount, showNLimitHint])
 
   const clearAgentNHintTouchTimer = useCallback(() => {
-    if (nHintTouchTimerRef.current != null) {
-      window.clearTimeout(nHintTouchTimerRef.current)
-      nHintTouchTimerRef.current = null
-    }
-  }, [])
+    nLimitHint.clearTimer()
+  }, [nLimitHint])
 
   const startAgentNHintTouch = useCallback(() => {
     if (!agentAutoImageCount) return
-    clearAgentNHintTouchTimer()
-    nHintTouchTimerRef.current = window.setTimeout(() => {
-      showNLimitHint()
-      nHintTouchTimerRef.current = null
-    }, 450)
-  }, [agentAutoImageCount, clearAgentNHintTouchTimer, showNLimitHint])
+    nLimitHint.startTouch()
+  }, [agentAutoImageCount, nLimitHint])
 
   const handleNInputChange = useCallback((value: string) => {
     if (agentAutoImageCount) {
@@ -834,102 +904,6 @@ export default function InputBar() {
     preventDefault()
     showNLimitHint()
   }, [agentAutoImageCount, nInput, nInputFocused, outputImageLimit, params.n, showNLimitHint])
-
-  const showModerationHint = () => {
-    if (moderationDisabled) setModerationHintVisible(true)
-  }
-
-  const hideModerationHint = () => {
-    setModerationHintVisible(false)
-    clearModerationHintTimer()
-  }
-
-  const clearModerationHintTimer = () => {
-    if (moderationHintTimerRef.current != null) {
-      window.clearTimeout(moderationHintTimerRef.current)
-      moderationHintTimerRef.current = null
-    }
-  }
-
-  const startModerationHintTouch = () => {
-    if (!moderationDisabled) return
-    moderationHintTimerRef.current = window.setTimeout(() => {
-      setModerationHintVisible(true)
-      moderationHintTimerRef.current = null
-    }, 450)
-  }
-
-  const showCompressionHint = () => {
-    if (compressionDisabled) setCompressionHintVisible(true)
-  }
-
-  const hideCompressionHint = () => {
-    setCompressionHintVisible(false)
-    clearCompressionHintTimer()
-  }
-
-  const clearCompressionHintTimer = () => {
-    if (compressionHintTimerRef.current != null) {
-      window.clearTimeout(compressionHintTimerRef.current)
-      compressionHintTimerRef.current = null
-    }
-  }
-
-  const startCompressionHintTouch = () => {
-    if (!compressionDisabled) return
-    compressionHintTimerRef.current = window.setTimeout(() => {
-      setCompressionHintVisible(true)
-      compressionHintTimerRef.current = null
-    }, 450)
-  }
-
-  const showQualityHint = () => {
-    if (settings.codexCli || isFalProvider) setQualityHintVisible(true)
-  }
-
-  const showSizeHint = () => {
-    if (isFalTextToImage) setSizeHintVisible(true)
-  }
-
-  const hideSizeHint = () => {
-    setSizeHintVisible(false)
-    clearSizeHintTimer()
-  }
-
-  const clearSizeHintTimer = () => {
-    if (sizeHintTimerRef.current != null) {
-      window.clearTimeout(sizeHintTimerRef.current)
-      sizeHintTimerRef.current = null
-    }
-  }
-
-  const startSizeHintTouch = () => {
-    if (!isFalTextToImage) return
-    sizeHintTimerRef.current = window.setTimeout(() => {
-      setSizeHintVisible(true)
-      sizeHintTimerRef.current = null
-    }, 450)
-  }
-
-  const hideQualityHint = () => {
-    setQualityHintVisible(false)
-    clearQualityHintTimer()
-  }
-
-  const clearQualityHintTimer = () => {
-    if (qualityHintTimerRef.current != null) {
-      window.clearTimeout(qualityHintTimerRef.current)
-      qualityHintTimerRef.current = null
-    }
-  }
-
-  const startQualityHintTouch = () => {
-    if (!settings.codexCli && !isFalProvider) return
-    qualityHintTimerRef.current = window.setTimeout(() => {
-      setQualityHintVisible(true)
-      qualityHintTimerRef.current = null
-    }, 450)
-  }
 
   const clearImageHintTimer = () => {
     if (imageHintTimerRef.current != null) {
@@ -1167,8 +1141,8 @@ export default function InputBar() {
           }
           addInputImage({ id: imageId, dataUrl })
         })).then(() => {
-          showToast(`已添加到参考图`, 'success')
-        }).catch((err) => showToast(`添加参考图失败：${err instanceof Error ? err.message : String(err)}`, 'error'))
+          showToast('已上传图片', 'success')
+        }).catch((err) => showToast(`上传图片失败：${err instanceof Error ? err.message : String(err)}`, 'error'))
       }
     }
 
@@ -1201,7 +1175,11 @@ export default function InputBar() {
     el.style.height = '0'
     el.style.overflowY = 'hidden'
     const scrollH = el.scrollHeight
-    const minH = 42
+
+    const placeholderEl = el.parentElement?.querySelector('.prompt-placeholder')
+    const placeholderH = placeholderEl ? placeholderEl.scrollHeight : 0
+    const minH = Math.max(42, placeholderH)
+
     const desired = Math.max(scrollH, minH)
     const targetH = desired > maxH ? maxH : desired
 
@@ -1513,6 +1491,14 @@ export default function InputBar() {
           e.preventDefault()
           const el = textareaRef.current
           const cursor = el ? getContentEditableCursor(el) : prompt.length
+          if (el) {
+            el.focus()
+            setContentEditableCursor(el, cursor)
+            if (document.execCommand('insertHTML', false, getMentionTagHtml(getImageMentionLabel(idx)))) {
+              syncPromptFromContentEditable()
+              return
+            }
+          }
           const next = insertImageMentionAtVisibleRange(prompt, cursor, cursor, idx)
           isUserInputRef.current = false
           setPrompt(next.prompt)
@@ -1647,12 +1633,12 @@ export default function InputBar() {
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
       <label
         className="relative flex flex-col gap-0.5"
-        onMouseEnter={showSizeHint}
-        onMouseLeave={hideSizeHint}
-        onTouchStart={startSizeHintTouch}
-        onTouchEnd={clearSizeHintTimer}
-        onTouchCancel={hideSizeHint}
-        onClick={showSizeHint}
+        onMouseEnter={sizeHint.show}
+        onMouseLeave={sizeHint.hide}
+        onTouchStart={sizeHint.startTouch}
+        onTouchEnd={sizeHint.clearTimer}
+        onTouchCancel={sizeHint.hide}
+        onClick={sizeHint.show}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">尺寸</span>
         <button
@@ -1664,18 +1650,18 @@ export default function InputBar() {
           {displaySize}
         </button>
         <ButtonTooltip
-          visible={isFalTextToImage && sizeHintVisible}
+          visible={isFalTextToImage && sizeHint.visible}
           text={<>fal.ai 的文生图模式不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 参数</>}
         />
       </label>
       <label
         className="relative flex flex-col gap-0.5"
-        onMouseEnter={showQualityHint}
-        onMouseLeave={hideQualityHint}
-        onTouchStart={startQualityHintTouch}
-        onTouchEnd={clearQualityHintTimer}
-        onTouchCancel={hideQualityHint}
-        onClick={showQualityHint}
+        onMouseEnter={qualityHint.show}
+        onMouseLeave={qualityHint.hide}
+        onTouchStart={qualityHint.startTouch}
+        onTouchEnd={qualityHint.clearTimer}
+        onTouchCancel={qualityHint.hide}
+        onClick={qualityHint.show}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
         <Select
@@ -1690,7 +1676,7 @@ export default function InputBar() {
             : selectClass}
         />
         <ButtonTooltip
-          visible={(settings.codexCli || isFalProvider) && qualityHintVisible}
+          visible={(settings.codexCli || isFalProvider) && qualityHint.visible}
           text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
         />
       </label>
@@ -1709,12 +1695,12 @@ export default function InputBar() {
       </label>
       <label
         className="relative flex flex-col gap-0.5"
-        onMouseEnter={showCompressionHint}
-        onMouseLeave={hideCompressionHint}
-        onTouchStart={startCompressionHintTouch}
-        onTouchEnd={clearCompressionHintTimer}
-        onTouchCancel={hideCompressionHint}
-        onClick={showCompressionHint}
+        onMouseEnter={compressionHint.show}
+        onMouseLeave={compressionHint.hide}
+        onTouchStart={compressionHint.startTouch}
+        onTouchEnd={compressionHint.clearTimer}
+        onTouchCancel={compressionHint.hide}
+        onClick={compressionHint.show}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">压缩率</span>
         <input
@@ -1733,18 +1719,18 @@ export default function InputBar() {
             }`}
         />
         <ButtonTooltip
-          visible={compressionHintVisible}
+          visible={compressionHint.visible}
           text={isFalProvider ? 'fal.ai 不支持压缩率参数' : '仅 JPEG 和 WebP 支持压缩率'}
         />
       </label>
       <label
         className="relative flex flex-col gap-0.5"
-        onMouseEnter={showModerationHint}
-        onMouseLeave={hideModerationHint}
-        onTouchStart={startModerationHintTouch}
-        onTouchEnd={clearModerationHintTimer}
-        onTouchCancel={hideModerationHint}
-        onClick={showModerationHint}
+        onMouseEnter={moderationHint.show}
+        onMouseLeave={moderationHint.hide}
+        onTouchStart={moderationHint.startTouch}
+        onTouchEnd={moderationHint.clearTimer}
+        onTouchCancel={moderationHint.hide}
+        onClick={moderationHint.show}
       >
         <span className="text-gray-400 dark:text-gray-500 ml-1">审核</span>
         <Select
@@ -1762,7 +1748,7 @@ export default function InputBar() {
             : selectClass}
         />
         <ButtonTooltip
-          visible={moderationDisabled && moderationHintVisible}
+          visible={moderationDisabled && moderationHint.visible}
           text="fal.ai 不支持审核参数"
         />
       </label>
@@ -1807,7 +1793,8 @@ export default function InputBar() {
               : 'bg-white/50 dark:bg-white/[0.03]'
           }`}
         />
-        <ButtonTooltip visible={nLimitHintVisible} text={nLimitHintText} />
+        <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
+        <ButtonTooltip visible={streamConcurrentByN && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
       </label>
     </div>
   )
@@ -1839,7 +1826,7 @@ export default function InputBar() {
                 </>
               ) : (
                 <>
-                  <p className="text-lg font-semibold text-gray-700 dark:text-gray-200">释放以添加参考图</p>
+                  <p className="text-lg font-semibold text-gray-700 dark:text-gray-200">释放以上传图片</p>
                   <p className="text-sm text-gray-400 mt-1">支持 JPG、PNG、WebP 等格式</p>
                 </>
               )}
@@ -1963,7 +1950,7 @@ export default function InputBar() {
           )}
 
           {/* 输入框 */}
-          <div className="relative">
+          <div className="relative grid">
             {showAtImageMenu && (
               <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
                 <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-400 dark:text-gray-500">选择图片引用</div>
@@ -2035,9 +2022,14 @@ export default function InputBar() {
 
                 syncMentionTagSelection(el)
               }}
-              data-placeholder="描述你想生成的图片，可输入 @ 指定当前参考图..."
-              className="min-h-[42px] w-full whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 px-4 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 empty:before:pointer-events-none empty:before:text-gray-400 empty:before:content-[attr(data-placeholder)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30 dark:empty:before:text-gray-500"
+              aria-label={promptPlaceholder}
+              className="col-start-1 row-start-1 min-h-[42px] w-full whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 px-4 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
             />
+            {prompt.length === 0 && (
+              <div className="prompt-placeholder col-start-1 row-start-1 pointer-events-none px-4 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500">
+                {promptPlaceholder}
+              </div>
+            )}
           </div>
 
           {/* 参数 + 按钮 */}
@@ -2052,7 +2044,7 @@ export default function InputBar() {
                   onMouseEnter={() => setAttachHover(true)}
                   onMouseLeave={() => setAttachHover(false)}
                 >
-                  <ButtonTooltip visible={atImageLimit && attachHover} text={`参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`} />
+                  <ButtonTooltip visible={attachHover} text={uploadImageTooltipText} />
                   <button
                     onClick={() => !atImageLimit && fileInputRef.current?.click()}
                     className={`p-2.5 rounded-xl transition-all shadow-sm ${
@@ -2060,7 +2052,7 @@ export default function InputBar() {
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
                         : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
                     }`}
-                    title={atImageLimit ? `已达上限 ${API_MAX_IMAGES} 张` : '添加参考图'}
+                    aria-label={uploadImageTooltipText}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -2072,7 +2064,7 @@ export default function InputBar() {
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
-                  <ButtonTooltip visible={!hasSubmitApiConfig && submitHover} text="尚未完成 API 配置，请在右上角设置中进行" />
+                  <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
@@ -2083,7 +2075,7 @@ export default function InputBar() {
                         ? 'bg-gray-300 dark:bg-white/[0.06] text-white cursor-pointer'
                         : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
                     }`}
-                    title={activeAgentIsRunning ? '停止 Agent 回复' : hasSubmitApiConfig ? (maskDraft ? '遮罩编辑 (Ctrl+Enter)' : '生成 (Ctrl+Enter)') : '请先配置 API'}
+                    aria-label={submitButtonAriaLabel}
                   >
                     {activeAgentIsRunning ? (
                       <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -2114,30 +2106,77 @@ export default function InputBar() {
                   onMouseEnter={() => setAttachHover(true)}
                   onMouseLeave={() => setAttachHover(false)}
                 >
-                  <ButtonTooltip visible={atImageLimit && attachHover} text={`参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`} />
+                  <ButtonTooltip visible={attachHover} text={uploadImageTooltipText} />
                   <button
-                    onClick={() => !atImageLimit && fileInputRef.current?.click()}
+                    onClick={() => {
+                      if (!atImageLimit) {
+                        setShowMobileUploadMenu(!showMobileUploadMenu)
+                      }
+                    }}
                     className={`p-2.5 rounded-xl transition-all shadow-sm flex-shrink-0 ${
                       atImageLimit
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
                         : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300'
                     }`}
-                    title={atImageLimit ? `已达上限 ${API_MAX_IMAGES} 张` : '添加参考图'}
+                    aria-label={uploadImageTooltipText}
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    <svg
+                      className={`w-5 h-5 transition-transform duration-200 ${showMobileUploadMenu ? 'rotate-90' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
                   </button>
+
+                  {/* Mobile Upload Menu */}
+                  {showMobileUploadMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setShowMobileUploadMenu(false)}
+                      />
+                      <div className="absolute bottom-full left-0 mb-2 w-32 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <button
+                          className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
+                          onClick={() => {
+                            setShowMobileUploadMenu(false)
+                            cameraInputRef.current?.click()
+                          }}
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          拍照
+                        </button>
+                        <button
+                          className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
+                          onClick={() => {
+                            setShowMobileUploadMenu(false)
+                            fileInputRef.current?.click()
+                          }}
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                          </svg>
+                          上传图片
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div
                   className="relative flex-1"
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
-                  <ButtonTooltip visible={!hasSubmitApiConfig && submitHover} text="尚未完成 API 配置，请在右上角设置中进行" />
+                  <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
                     onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
+                    aria-label={submitButtonAriaLabel}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
                       activeAgentIsRunning
                         ? 'bg-red-500 text-white hover:bg-red-600'
@@ -2167,6 +2206,14 @@ export default function InputBar() {
             type="file"
             accept="image/*"
             multiple
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
             className="hidden"
             onChange={handleFileUpload}
           />
