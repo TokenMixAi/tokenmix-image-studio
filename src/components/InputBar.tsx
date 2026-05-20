@@ -9,7 +9,7 @@ import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
-import { collectAgentRoundOutputImages } from '../lib/agentImageReferences'
+import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
@@ -685,7 +685,8 @@ export default function InputBar() {
   const agentOutputImageOptions = useMemo<AtImageOption[]>(() => {
     if (!activeAgentConversation) return []
     return getActiveAgentRounds(activeAgentConversation).flatMap((round) =>
-      collectAgentRoundOutputImages(round, tasks).map((imageId, imageIndex) => {
+      collectAgentRoundOutputImageSlots(round, tasks).flatMap((imageId, imageIndex) => {
+        if (!imageId) return []
         const label = `@第${round.index}轮图${imageIndex + 1}`
         return {
           type: 'agent-output' as const,

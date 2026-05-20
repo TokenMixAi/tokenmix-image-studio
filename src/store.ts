@@ -13,6 +13,7 @@ import type {
   MaskDraft,
   TaskRecord,
   ExportData,
+  ResponsesApiResponse,
   ResponsesOutputItem,
 } from './types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
@@ -38,7 +39,7 @@ import {
 } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage, type BatchImageCallResult } from './lib/agentApi'
-import { collectAgentRoundOutputImages, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
+import { collectAgentRoundOutputImageSlots, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
@@ -629,6 +630,7 @@ interface AppState {
   agentAssetPanelCollapsed: boolean
   agentMobileHeaderVisible: boolean
   agentEditingRoundId: string | null
+  agentEditingConversationId: string | null
   agentGeneratingTitleIds: Record<string, true>
   createAgentConversation: () => string
   setActiveAgentConversationId: (id: string | null) => void
@@ -640,6 +642,7 @@ interface AppState {
   setAgentAssetPanelCollapsed: (collapsed: boolean) => void
   setAgentMobileHeaderVisible: (visible: boolean) => void
   setAgentEditingRoundId: (id: string | null) => void
+  setAgentEditingConversationId: (id: string | null) => void
 
   // 任务列表
   tasks: TaskRecord[]
@@ -1080,10 +1083,11 @@ export const useStore = create<AppState>()(
       activeAgentConversationId: null,
       agentInputDrafts: {},
       agentSidebarCollapsed: true,
-      agentAssetTab: 'references',
-      agentAssetPanelCollapsed: true,
-      agentMobileHeaderVisible: true,
+      agentAssetTab: 'outputs',
+      agentAssetPanelCollapsed: false,
+      agentMobileHeaderVisible: false,
       agentEditingRoundId: null,
+      agentEditingConversationId: null,
       agentGeneratingTitleIds: {},
       createAgentConversation: () => {
         const now = Date.now()
@@ -1165,6 +1169,7 @@ export const useStore = create<AppState>()(
       setAgentAssetPanelCollapsed: (agentAssetPanelCollapsed) => set({ agentAssetPanelCollapsed }),
       setAgentMobileHeaderVisible: (agentMobileHeaderVisible) => set({ agentMobileHeaderVisible }),
       setAgentEditingRoundId: (agentEditingRoundId) => set({ agentEditingRoundId }),
+      setAgentEditingConversationId: (agentEditingConversationId) => set({ agentEditingConversationId }),
 
       // Tasks
       tasks: [],
@@ -2288,7 +2293,11 @@ function createAgentGeneratedReferenceEntries(round: AgentRound, tasks: TaskReco
   let imageIndex = 0
   for (const taskId of round.outputTaskIds) {
     const task = tasks.find((item) => item.id === taskId)
-    if (!task) continue
+    if (!task) {
+      entries.push(`\n  <removed_ref id="${getAgentGeneratedImageReferenceId(round, imageIndex)}" />`)
+      imageIndex += 1
+      continue
+    }
     const prompt = truncateAgentReferencePrompt(task.prompt || '')
     const promptAttribute = prompt ? ` prompt="${escapeXmlAttribute(prompt)}"` : ''
     for (const _imageId of task.outputImages) {
@@ -2343,6 +2352,104 @@ function sanitizeResponseOutputItemForInput(item: ResponsesOutputItem): unknown 
   }
 
   return item
+}
+
+function filterAgentRoundResponseOutputForInput(round: AgentRound, tasks: TaskRecord[], output: ResponsesOutputItem[]) {
+  const roundTaskIds = new Set(round.outputTaskIds)
+  const roundTaskSlots = round.outputTaskIds.map((taskId) => tasks.find((task) => task.id === taskId) ?? null)
+  let anonymousImageIndex = 0
+
+  return output.filter((item) => {
+    if (item.type !== 'image_generation_call') return true
+
+    if (typeof item.id === 'string' && item.id) {
+      return tasks.some((task) =>
+        roundTaskIds.has(task.id) &&
+        task.agentRoundId === round.id &&
+        task.agentToolCallId === item.id,
+      )
+    }
+
+    const task = roundTaskSlots[anonymousImageIndex]
+    anonymousImageIndex += 1
+    return Boolean(task)
+  })
+}
+
+function scrubResponseOutputForDeletedAgentTasks(round: AgentRound, output: ResponsesOutputItem[], deletedTasks: TaskRecord[]) {
+  const deletedTaskIds = new Set(deletedTasks.map((task) => task.id))
+  const deletedToolCallIds = new Set(
+    deletedTasks
+      .filter((task) => task.agentRoundId === round.id && task.agentToolCallId)
+      .map((task) => task.agentToolCallId!),
+  )
+  if (deletedTaskIds.size === 0) return output
+
+  let anonymousImageIndex = 0
+  return output.filter((item) => {
+    if (item.type !== 'image_generation_call') return true
+
+    if (typeof item.id === 'string' && item.id) {
+      return !deletedToolCallIds.has(item.id)
+    }
+
+    const taskId = round.outputTaskIds[anonymousImageIndex]
+    anonymousImageIndex += 1
+    return !deletedTaskIds.has(taskId)
+  })
+}
+
+function scrubAgentConversationsForDeletedTasks(conversations: AgentConversation[], deletedTasks: TaskRecord[]) {
+  if (deletedTasks.length === 0) return conversations
+
+  return conversations.map((conversation) => ({
+    ...conversation,
+    rounds: conversation.rounds.map((round) => {
+      const roundDeletedTasks = deletedTasks.filter((task) => round.outputTaskIds.includes(task.id))
+      if (roundDeletedTasks.length === 0 || !round.responseOutput?.length) return round
+      return {
+        ...round,
+        responseOutput: scrubResponseOutputForDeletedAgentTasks(round, round.responseOutput, roundDeletedTasks),
+      }
+    }),
+  }))
+}
+
+function scrubTaskRawResponsePayloadForDeletedTasks(task: TaskRecord, conversations: AgentConversation[], deletedTasks: TaskRecord[]) {
+  if (!task.rawResponsePayload || !task.agentRoundId) return task
+
+  const round = conversations
+    .flatMap((conversation) => conversation.rounds)
+    .find((item) => item.id === task.agentRoundId)
+  if (!round) return task
+
+  const roundDeletedTasks = deletedTasks.filter((item) => round.outputTaskIds.includes(item.id))
+  if (roundDeletedTasks.length === 0) return task
+
+  try {
+    const payload = JSON.parse(task.rawResponsePayload) as ResponsesApiResponse
+    if (!Array.isArray(payload.output)) return task
+    const output = scrubResponseOutputForDeletedAgentTasks(round, payload.output, roundDeletedTasks)
+    if (output.length === payload.output.length) return task
+    return { ...task, rawResponsePayload: JSON.stringify({ ...payload, output }, null, 2) }
+  } catch {
+    return task
+  }
+}
+
+async function scrubAgentOutputPayloadsForDeletedTasks(deletedTasks: TaskRecord[], remainingTasks: TaskRecord[]) {
+  if (deletedTasks.length === 0) return remainingTasks
+
+  const conversations = scrubAgentConversationsForDeletedTasks(useStore.getState().agentConversations, deletedTasks)
+  const scrubbedTasks = remainingTasks.map((task) => scrubTaskRawResponsePayloadForDeletedTasks(task, conversations, deletedTasks))
+  useStore.setState({ agentConversations: conversations })
+
+  for (const task of scrubbedTasks) {
+    const previous = remainingTasks.find((item) => item.id === task.id)
+    if (previous?.rawResponsePayload !== task.rawResponsePayload) await putTask(task)
+  }
+
+  return scrubbedTasks
 }
 
 function sanitizeResponseOutputForInput(output: ResponsesOutputItem[], options: { allowPendingFunctionCalls?: boolean } = {}) {
@@ -2415,8 +2522,9 @@ function buildAgentContinuationInput(baseInput: unknown[], round: AgentRound, ta
   const input = [...baseInput, ...sanitizeResponseOutputForInput(currentRoundOutput, { allowPendingFunctionCalls: true })]
   const labelsItem = createAgentGeneratedReferenceLabelsItem(round, tasks)
   if (labelsItem) input.push(labelsItem)
-  const outputImages = collectAgentRoundOutputImages(round, tasks)
-  const newImageRefs = outputImages.map((_, index) => `<ref id="${getAgentGeneratedImageReferenceId(round, index)}" />`)
+  const newImageRefs = collectAgentRoundOutputImageSlots(round, tasks)
+    .map((imageId, index) => imageId ? `<ref id="${getAgentGeneratedImageReferenceId(round, index)}" />` : null)
+    .filter((ref): ref is string => Boolean(ref))
   input.push(createAgentContinuationInputItem(newImageRefs, toolCallsUsed, maxToolCalls))
   return input
 }
@@ -2446,7 +2554,8 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
 
     const output = getAgentRoundResponseOutput(round, tasks)
     if (output?.length) {
-      input.push(...sanitizeResponseOutputForInput(output))
+      const sanitizedOutput = sanitizeResponseOutputForInput(filterAgentRoundResponseOutputForInput(round, tasks, output))
+      if (sanitizedOutput.length > 0) input.push(...sanitizedOutput)
       const labelsItem = createAgentGeneratedReferenceLabelsItem(round, tasks)
       if (labelsItem) input.push(labelsItem)
       continue
@@ -2455,10 +2564,11 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
     const assistantMessage = round.assistantMessageId
       ? conversation.messages.find((message) => message.id === round.assistantMessageId)
       : null
-    const removedOutputTaskCount = round.outputTaskIds.filter((taskId) => !tasks.some((task) => task.id === taskId)).length
     input.push(createAgentAssistantFallbackItem(
-      assistantMessage?.content || (removedOutputTaskCount > 0 ? '[Generated image removed]' : '[No text response]'),
+      assistantMessage?.content || '[No text response]',
     ))
+    const labelsItem = createAgentGeneratedReferenceLabelsItem(round, tasks)
+    if (labelsItem) input.push(labelsItem)
   }
 
   return input
@@ -2893,14 +3003,15 @@ async function executeAgentRound(
         const latestConv = useStore.getState().agentConversations.find((item) => item.id === conversationId)
         if (!latestConv) continue
         for (const r of latestConv.rounds) {
-          const outputImages = collectAgentRoundOutputImages(r, useStore.getState().tasks)
+          const outputImages = collectAgentRoundOutputImageSlots(r, useStore.getState().tasks)
           for (let imgIdx = 0; imgIdx < outputImages.length; imgIdx++) {
             const generatedRefId = getAgentGeneratedImageReferenceId(r, imgIdx)
             if (generatedRefId === refId) {
               const imageId = outputImages[imgIdx]
+              if (!imageId) continue
               const dataUrl = await ensureImageCached(imageId)
               if (dataUrl) dataUrls.push(dataUrl)
-              if (imageId) imageIds.push(imageId)
+              imageIds.push(imageId)
             }
           }
         }
@@ -3652,7 +3763,8 @@ export async function removeMultipleTasks(taskIds: string[]) {
   if (!taskIds.length) return
 
   const toDelete = new Set(taskIds)
-  const remaining = tasks.filter(t => !toDelete.has(t.id))
+  const deletedTasks = tasks.filter(t => toDelete.has(t.id))
+  const remaining = await scrubAgentOutputPayloadsForDeletedTasks(deletedTasks, tasks.filter(t => !toDelete.has(t.id)))
 
   // 收集所有被删除任务的关联图片
   const deletedImageIds = new Set<string>()
@@ -3707,7 +3819,7 @@ export async function removeTask(task: TaskRecord) {
   ])
 
   // 从列表移除
-  const remaining = tasks.filter((t) => t.id !== task.id)
+  const remaining = await scrubAgentOutputPayloadsForDeletedTasks([task], tasks.filter((t) => t.id !== task.id))
   setTasks(remaining)
   await dbDeleteTask(task.id)
 

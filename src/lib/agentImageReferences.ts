@@ -15,13 +15,25 @@ export function getAgentReferenceTag(referenceId: string) {
   return `<ref id="${referenceId}" />`
 }
 
-export function collectAgentRoundOutputImages(round: AgentRound, tasks: TaskRecord[]) {
-  const images: string[] = []
+export function getAgentRemovedReferenceTag(referenceId: string) {
+  return `<removed_ref id="${referenceId}" />`
+}
+
+export function collectAgentRoundOutputImageSlots(round: AgentRound, tasks: TaskRecord[]) {
+  const slots: Array<string | null> = []
   for (const taskId of round.outputTaskIds) {
     const task = tasks.find((item) => item.id === taskId)
-    if (task) images.push(...task.outputImages)
+    if (!task) {
+      slots.push(null)
+      continue
+    }
+    slots.push(...task.outputImages)
   }
-  return images
+  return slots
+}
+
+export function collectAgentRoundOutputImages(round: AgentRound, tasks: TaskRecord[]) {
+  return collectAgentRoundOutputImageSlots(round, tasks).filter((imageId): imageId is string => Boolean(imageId))
 }
 
 export function resolveAgentPromptImageReferences(prompt: string, rounds: AgentRound[], tasks: TaskRecord[]) {
@@ -32,7 +44,7 @@ export function resolveAgentPromptImageReferences(prompt: string, rounds: AgentR
     const round = rounds[roundIndex]
     if (!round || imageIndex < 0) continue
 
-    const imageId = collectAgentRoundOutputImages(round, tasks)[imageIndex]
+    const imageId = collectAgentRoundOutputImageSlots(round, tasks)[imageIndex]
     if (imageId) refs.push(imageId)
   }
   return refs
@@ -56,8 +68,8 @@ export function replaceAgentPromptImageReferencesForApi(
     const sourceRound = rounds[roundIndex]
     if (!sourceRound || imageIndex < 0) return text
 
-    const imageId = collectAgentRoundOutputImages(sourceRound, tasks)[imageIndex]
-    if (!imageId) return text
+    const imageId = collectAgentRoundOutputImageSlots(sourceRound, tasks)[imageIndex]
+    if (!imageId) return getAgentRemovedReferenceTag(getAgentGeneratedImageReferenceId(sourceRound, imageIndex))
 
     const currentReferenceIndex = currentRound.inputImageIds.indexOf(imageId)
     const referenceId = currentReferenceIndex >= 0

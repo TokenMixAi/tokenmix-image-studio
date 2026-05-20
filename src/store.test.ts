@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS } from './types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
+import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
@@ -63,7 +63,8 @@ vi.mock('./lib/agentApi', () => ({
   callAgentResponsesApi: vi.fn(() => new Promise(() => {})),
 }))
 import { clearImages, putImage } from './lib/db'
-import { cleanStaleAgentInputDrafts, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, markInterruptedOpenAIRunningTasks, regenerateAgentAssistantMessage, reuseConfig, submitTask, useStore } from './store'
+import { callAgentResponsesApi } from './lib/agentApi'
+import { cleanStaleAgentInputDrafts, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, markInterruptedOpenAIRunningTasks, regenerateAgentAssistantMessage, removeTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -516,6 +517,190 @@ describe('agent draft lifecycle', () => {
     })
   })
 
+})
+
+describe('agent context for removed outputs', () => {
+  beforeEach(() => {
+    const profile = createDefaultOpenAIProfile({
+      id: 'responses-profile',
+      apiKey: 'test-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiMode: 'responses',
+        model: DEFAULT_RESPONSES_MODEL,
+        profiles: [profile],
+        activeProfileId: profile.id,
+      }),
+      prompt: '继续',
+      inputImages: [],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      appMode: 'agent',
+      tasks: [task({
+        id: 'task-live',
+        outputImages: ['image-live'],
+        sourceMode: 'agent',
+        agentRoundId: 'round-a',
+        agentToolCallId: 'live-call',
+      })],
+      agentConversations: [agentConversation({
+        id: 'conversation-a',
+        activeRoundId: 'round-a',
+        rounds: [{
+          id: 'round-a',
+          index: 1,
+          parentRoundId: null,
+          userMessageId: 'user-a',
+          assistantMessageId: 'assistant-a',
+          prompt: '画两张图',
+          inputImageIds: [],
+          outputTaskIds: ['task-deleted', 'task-live'],
+          responseOutput: [
+            { type: 'message', content: [{ type: 'output_text', text: '已生成两张图。' }] },
+            { type: 'image_generation_call', id: 'deleted-call', result: 'deleted-base64' },
+            { type: 'image_generation_call', id: 'live-call', result: 'live-base64' },
+          ],
+          status: 'done',
+          error: null,
+          createdAt: 1,
+          finishedAt: 2,
+        }],
+        messages: [
+          { id: 'user-a', role: 'user', content: '画两张图', roundId: 'round-a', createdAt: 1 },
+          { id: 'assistant-a', role: 'assistant', content: '已生成两张图。', roundId: 'round-a', outputTaskIds: ['task-deleted', 'task-live'], createdAt: 2 },
+        ],
+      })],
+      activeAgentConversationId: 'conversation-a',
+      agentEditingRoundId: null,
+      showToast: vi.fn(),
+    })
+    vi.mocked(callAgentResponsesApi).mockClear()
+    vi.mocked(callAgentResponsesApi).mockResolvedValue({
+      text: 'ok',
+      images: [],
+      outputItems: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+      responseId: 'response-b',
+    })
+  })
+
+  it('does not send removed image_generation results back to the model', async () => {
+    await submitAgentMessage()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const input = vi.mocked(callAgentResponsesApi).mock.calls[0][0].input
+    const serializedInput = JSON.stringify(input)
+    expect(serializedInput).not.toContain('deleted-base64')
+    expect(serializedInput).toContain('live-base64')
+    expect(serializedInput).not.toContain('Generated image removed')
+    expect(serializedInput).toContain('removed_ref')
+    expect(serializedInput).toContain('round-1-image-1')
+    expect(serializedInput).toContain('round-1-image-2')
+  })
+
+  it('scrubs stored agent response payloads when deleting an output task', async () => {
+    const rawResponsePayload = JSON.stringify({
+      output: [
+        { type: 'message', content: [{ type: 'output_text', text: '已生成两张图。' }] },
+        { type: 'image_generation_call', id: 'deleted-call', result: 'deleted-base64' },
+        { type: 'image_generation_call', id: 'live-call', result: 'live-base64' },
+      ],
+    }, null, 2)
+    const deletedTask = task({
+      id: 'task-deleted',
+      outputImages: ['image-deleted'],
+      rawResponsePayload,
+      sourceMode: 'agent',
+      agentRoundId: 'round-a',
+      agentToolCallId: 'deleted-call',
+    })
+    const liveTask = task({
+      id: 'task-live',
+      outputImages: ['image-live'],
+      rawResponsePayload,
+      sourceMode: 'agent',
+      agentRoundId: 'round-a',
+      agentToolCallId: 'live-call',
+    })
+    useStore.setState((state) => ({
+      tasks: [deletedTask, liveTask],
+      agentConversations: state.agentConversations.map((conversation) => ({
+        ...conversation,
+        rounds: conversation.rounds.map((round) => round.id === 'round-a'
+          ? { ...round, outputTaskIds: ['task-deleted', 'task-live'], responseOutput: JSON.parse(rawResponsePayload).output }
+          : round,
+        ),
+      })),
+    }))
+
+    await removeTask(deletedTask)
+
+    const state = useStore.getState()
+    const serializedConversations = JSON.stringify(state.agentConversations)
+    const remainingTaskPayload = state.tasks.find((item) => item.id === 'task-live')?.rawResponsePayload ?? ''
+    expect(serializedConversations).not.toContain('deleted-base64')
+    expect(remainingTaskPayload).not.toContain('deleted-base64')
+    expect(serializedConversations).toContain('live-base64')
+    expect(remainingTaskPayload).toContain('live-base64')
+  })
+
+  it('does not corrupt batch task payloads when deleting one of the batch tasks', async () => {
+    const batchDeletedPayload = JSON.stringify({
+      output: [{ type: 'image_generation_call', id: 'batch-deleted-call', result: 'batch-deleted-base64' }],
+    }, null, 2)
+    const batchLivePayload = JSON.stringify({
+      output: [{ type: 'image_generation_call', id: 'batch-live-call', result: 'batch-live-base64' }],
+    }, null, 2)
+    const batchDeletedTask = task({
+      id: 'batch-task-deleted',
+      outputImages: ['batch-img-deleted'],
+      rawResponsePayload: batchDeletedPayload,
+      sourceMode: 'agent',
+      agentRoundId: 'round-a',
+      agentToolCallId: 'batch-deleted-call',
+      agentBatchCallId: 'batch-fc-1',
+    })
+    const batchLiveTask = task({
+      id: 'batch-task-live',
+      outputImages: ['batch-img-live'],
+      rawResponsePayload: batchLivePayload,
+      sourceMode: 'agent',
+      agentRoundId: 'round-a',
+      agentToolCallId: 'batch-live-call',
+      agentBatchCallId: 'batch-fc-1',
+    })
+    useStore.setState((state) => ({
+      tasks: [batchDeletedTask, batchLiveTask],
+      agentConversations: state.agentConversations.map((conversation) => ({
+        ...conversation,
+        rounds: conversation.rounds.map((round) => round.id === 'round-a'
+          ? {
+              ...round,
+              outputTaskIds: ['batch-task-deleted', 'batch-task-live'],
+              responseOutput: [
+                { type: 'function_call', name: 'generate_image_batch', call_id: 'batch-fc-1', arguments: '{}' },
+                { type: 'function_call_output', call_id: 'batch-fc-1', output: '{"images":[{"id":"1","status":"done"},{"id":"2","status":"done"}]}' },
+              ],
+            }
+          : round,
+        ),
+      })),
+    }))
+
+    await removeTask(batchDeletedTask)
+
+    const state = useStore.getState()
+    const liveTaskPayload = state.tasks.find((item) => item.id === 'batch-task-live')?.rawResponsePayload ?? ''
+    expect(liveTaskPayload).toContain('batch-live-base64')
+    expect(liveTaskPayload).not.toContain('batch-deleted-base64')
+    const serializedConversations = JSON.stringify(state.agentConversations)
+    expect(serializedConversations).toContain('function_call_output')
+    expect(serializedConversations).not.toContain('batch-deleted-base64')
+  })
 })
 
 describe('agent assistant regeneration', () => {

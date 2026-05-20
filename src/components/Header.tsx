@@ -25,6 +25,11 @@ export default function Header() {
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
   const setAgentMobileHeaderVisible = useStore((s) => s.setAgentMobileHeaderVisible)
+  const agentConversations = useStore((s) => s.agentConversations)
+  const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
+  const setAgentEditingConversationId = useStore((s) => s.setAgentEditingConversationId)
+  const setAgentSidebarCollapsed = useStore((s) => s.setAgentSidebarCollapsed)
+  const activeConversation = agentConversations.find((item) => item.id === activeAgentConversationId)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
@@ -140,7 +145,7 @@ export default function Header() {
   return (
     <>
       <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-200 dark:border-white/[0.08] transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
-        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between">
+        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between relative">
           <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
             <h1 className="inline-flex items-start relative mr-2">
               <a
@@ -190,6 +195,23 @@ export default function Header() {
               )}
             </div>}
           </div>
+          {appMode === 'agent' && activeConversation && (
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden sm:flex max-w-[30%]">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHistoryModal(true)
+                  // Use setTimeout to ensure HistoryModal is mounted before setting editing id
+                  setTimeout(() => {
+                    useStore.getState().setAgentEditingConversationId(activeConversation.id)
+                  }, 0)
+                }}
+                className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate hover:bg-gray-100 dark:hover:bg-white/[0.04] px-2 py-1 rounded transition-colors"
+              >
+                {activeConversation.title || 'Agent'}
+              </button>
+            </div>
+          )}
           <div className="hidden sm:flex items-center gap-1 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-100/70 dark:bg-white/[0.04] p-1 mr-4">
             <button
               type="button"

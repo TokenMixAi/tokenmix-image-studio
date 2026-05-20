@@ -47,6 +47,14 @@ describe('agent image references', () => {
     ])).toEqual(['image-a2', 'image-b1'])
   })
 
+  it('keeps previous round image numbering stable after a task is removed', () => {
+    const rounds = [round({ index: 1, outputTaskIds: ['task-deleted', 'task-live'] })]
+
+    expect(resolveAgentPromptImageReferences('参考 @第1轮图1 和 @第1轮图2', rounds, [
+      task('task-live', ['image-live']),
+    ])).toEqual(['image-live'])
+  })
+
   it('replaces current hidden mentions with current round reference tags', () => {
     const currentRound = round({ index: 3, inputImageIds: ['image-a', 'image-b'] })
 
@@ -92,5 +100,17 @@ describe('agent image references', () => {
       [firstRound, currentRound],
       [task('task-a', ['image-a1'])],
     )).toBe('参考 <ref id="round-1-image-1" /> 生成')
+  })
+
+  it('replaces removed previous round references with removed_ref tags', () => {
+    const firstRound = round({ index: 1, outputTaskIds: ['task-deleted', 'task-live'] })
+    const currentRound = round({ index: 2, inputImageIds: [] })
+
+    expect(replaceAgentPromptImageReferencesForApi(
+      '参考 @1轮图1 和 @1轮图2 生成',
+      currentRound,
+      [firstRound, currentRound],
+      [task('task-live', ['image-live'])],
+    )).toBe('参考 <removed_ref id="round-1-image-1" /> 和 <ref id="round-1-image-2" /> 生成')
   })
 })

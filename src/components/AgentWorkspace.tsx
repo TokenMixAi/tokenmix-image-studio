@@ -15,12 +15,14 @@ function AgentActionButton({
   className,
   disabled = false,
   onClick,
+  onMouseDown,
   children,
 }: {
   tooltip: string
   className: string
   disabled?: boolean
   onClick?: (e: ReactMouseEvent<HTMLButtonElement>) => void
+  onMouseDown?: (e: ReactMouseEvent<HTMLButtonElement>) => void
   children: ReactNode
 }) {
   const [tooltipVisible, setTooltipVisible] = useState(false)
@@ -39,6 +41,7 @@ function AgentActionButton({
         disabled={disabled}
         aria-label={tooltip}
         onClick={onClick}
+        onMouseDown={onMouseDown}
       >
         {children}
       </button>
@@ -142,7 +145,13 @@ type AgentAssistantBlock =
   | { type: 'web-search'; status: AgentWebSearchStatus; key: string }
   | { type: 'batch-params'; status: AgentWebSearchStatus; key: string }
   | { type: 'image-task'; task: TaskRecord; key: string }
+  | { type: 'deleted-image-task'; taskId: string; key: string }
   | { type: 'text'; key: string; content?: string }
+
+interface AgentRoundTaskSlot {
+  taskId: string
+  task: TaskRecord | null
+}
 
 function isAgentRoundInterrupted(round: AgentRound | null) {
   return round?.status === 'error' && round.error === AGENT_STOPPED_MESSAGE
@@ -172,13 +181,17 @@ function getTextFromOutputItem(item: ResponsesOutputItem) {
     .trim()
 }
 
-function getAgentAssistantBlocks(round: AgentRound | null, tasksForRound: TaskRecord[], allTasks: TaskRecord[], hasText: boolean): AgentAssistantBlock[] {
+function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRoundTaskSlot[], allTasks: TaskRecord[], hasText: boolean): AgentAssistantBlock[] {
   const outputItems = getAgentRoundOutputItems(round, allTasks)
+  const tasksForRound = taskSlots.map((slot) => slot.task).filter(Boolean) as TaskRecord[]
   const roundInterrupted = isAgentRoundInterrupted(round)
   if (outputItems.length === 0) {
     return [
       ...(hasText ? [{ type: 'text' as const, key: 'text:fallback' }] : []),
-      ...tasksForRound.map((task) => ({ type: 'image-task' as const, task, key: `image:${task.id}` })),
+      ...taskSlots.map((slot) => slot.task
+        ? ({ type: 'image-task' as const, task: slot.task, key: `image:${slot.task.id}` })
+        : ({ type: 'deleted-image-task' as const, taskId: slot.taskId, key: `deleted-image:${slot.taskId}` }),
+      ),
     ]
   }
 
@@ -242,8 +255,12 @@ function getAgentAssistantBlocks(round: AgentRound | null, tasksForRound: TaskRe
   flushWebSearchGroup()
 
   if (hasText && renderedTextBlocks === 0) blocks.push({ type: 'text', key: 'text:fallback' })
-  for (const task of tasksForRound) {
-    if (!renderedTaskIds.has(task.id)) blocks.push({ type: 'image-task', task, key: `image:${task.id}` })
+  for (const slot of taskSlots) {
+    if (slot.task) {
+      if (!renderedTaskIds.has(slot.task.id)) blocks.push({ type: 'image-task', task: slot.task, key: `image:${slot.task.id}` })
+    } else {
+      blocks.push({ type: 'deleted-image-task', taskId: slot.taskId, key: `deleted-image:${slot.taskId}` })
+    }
   }
   return blocks
 }
@@ -259,6 +276,14 @@ function getConversationSearchText(conversation: AgentConversation) {
 function getRoundTasks(round: AgentRound | null, tasks: TaskRecord[]) {
   if (!round) return []
   return round.outputTaskIds.map((taskId) => tasks.find((task) => task.id === taskId) ?? null)
+}
+
+function getRoundTaskSlots(round: AgentRound | null, tasks: TaskRecord[]): AgentRoundTaskSlot[] {
+  if (!round) return []
+  return round.outputTaskIds.map((taskId) => ({
+    taskId,
+    task: tasks.find((task) => task.id === taskId) ?? null,
+  }))
 }
 
 const MOBILE_HEADER_PULL_THRESHOLD = 24
@@ -291,12 +316,15 @@ export default function AgentWorkspace() {
   const setAppMode = useStore((s) => s.setAppMode)
   const agentScrollToBottomAfterSubmit = useStore((s) => s.settings.agentScrollToBottomAfterSubmit)
   const agentEditingRoundId = useStore((s) => s.agentEditingRoundId)
+  const agentEditingConversationId = useStore((s) => s.agentEditingConversationId)
+  const setAgentEditingConversationId = useStore((s) => s.setAgentEditingConversationId)
   const setAgentEditingRoundId = useStore((s) => s.setAgentEditingRoundId)
   const setActiveAgentRoundId = useStore((s) => s.setActiveAgentRoundId)
   const showToast = useStore((s) => s.showToast)
   const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
+  const [editingConversationTitle, setEditingConversationTitle] = useState('')
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomSentinelRef = useRef<HTMLDivElement>(null)
@@ -571,14 +599,42 @@ export default function AgentWorkspace() {
     })
   }
 
-  const handleRenameConversation = (id: string, currentTitle: string) => {
+  const startRenameConversation = (e: ReactMouseEvent | React.TouchEvent, id: string, currentTitle: string) => {
+    e.stopPropagation()
     if (agentGeneratingTitleIds[id]) {
       showToast('标题生成中，暂不能修改标题', 'info')
       return
     }
-    const title = window.prompt('输入新的对话标题', currentTitle)
-    if (title != null) renameConversation(id, title)
+    setAgentEditingConversationId(id)
+    setEditingConversationTitle(currentTitle)
   }
+
+  const confirmRenameConversation = () => {
+    if (agentEditingConversationId && editingConversationTitle.trim() && !agentGeneratingTitleIds[agentEditingConversationId]) {
+      renameConversation(agentEditingConversationId, editingConversationTitle.trim())
+    }
+    setAgentEditingConversationId(null)
+  }
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      confirmRenameConversation()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setAgentEditingConversationId(null)
+    }
+  }
+
+  // Effect to sync title when editing id is set from outside (e.g. Header)
+  useEffect(() => {
+    if (agentEditingConversationId) {
+      const convo = conversations.find(c => c.id === agentEditingConversationId)
+      if (convo) {
+        setEditingConversationTitle(convo.title)
+      }
+    }
+  }, [agentEditingConversationId, conversations])
 
   const clearConversationLongPressTimer = () => {
     if (conversationLongPressTimer.current == null) return
@@ -802,17 +858,46 @@ export default function AgentWorkspace() {
                   if (conversationActionsId === item.id) e.preventDefault()
                 }}
               >
-                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => handleConversationSelect(item.id)}>
-                  <div className={`truncate ${item.id === activeConversationId ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>{item.title}</div>
-                  <div className="text-xs text-gray-400">{formatTime(item.updatedAt)}</div>
-                </button>
-                <div className={`flex shrink-0 items-center gap-1 overflow-hidden transition-all duration-150 group-hover:w-[4.5rem] group-hover:opacity-100 group-focus-within:w-[4.5rem] group-focus-within:opacity-100 ${conversationActionsId === item.id ? 'w-[4.5rem] opacity-100' : 'w-0 opacity-0'}`}>
-                  <AgentActionButton tooltip="编辑标题" className="p-1.5 text-gray-400 hover:text-gray-700 disabled:text-gray-300 disabled:hover:text-gray-300 disabled:cursor-not-allowed dark:hover:text-gray-200 dark:disabled:text-gray-600 dark:disabled:hover:text-gray-600" onClick={() => handleRenameConversation(item.id, item.title)} disabled={isGeneratingTitle}>
-                    <EditIcon className="w-4 h-4" />
-                  </AgentActionButton>
-                  <AgentActionButton tooltip="删除" className="p-1.5 text-gray-400 hover:text-red-500" onClick={() => handleDeleteConversation(item.id)}>
-                    <TrashIcon className="w-4 h-4" />
-                  </AgentActionButton>
+                {agentEditingConversationId === item.id ? (
+                  <div className="min-w-0 flex-1 flex flex-col justify-center h-[38px]">
+                    <input
+                      type="text"
+                      className="flex-1 bg-white dark:bg-black/20 border border-blue-400/50 dark:border-white/20 rounded px-1.5 py-0.5 text-sm outline-none text-gray-900 dark:text-white focus:border-blue-500 dark:focus:border-white/40 shadow-sm min-w-0"
+                      value={editingConversationTitle}
+                      onChange={(e) => setEditingConversationTitle(e.target.value)}
+                      onKeyDown={handleRenameKeyDown}
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                      onBlur={confirmRenameConversation}
+                    />
+                  </div>
+                ) : (
+                  <button type="button" className="min-w-0 flex-1 text-left" onClick={() => handleConversationSelect(item.id)}>
+                    <div className={`truncate ${item.id === activeConversationId ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>{item.title}</div>
+                    <div className="text-xs text-gray-400">{formatTime(item.updatedAt)}</div>
+                  </button>
+                )}
+                <div className={`flex shrink-0 items-center gap-1 overflow-hidden transition-all duration-150 ${agentEditingConversationId === item.id ? 'w-6 opacity-100' : `group-hover:w-[4.5rem] group-hover:opacity-100 group-focus-within:w-[4.5rem] group-focus-within:opacity-100 ${conversationActionsId === item.id ? 'w-[4.5rem] opacity-100' : 'w-0 opacity-0'}`}`}>
+                  {agentEditingConversationId === item.id ? (
+                    <AgentActionButton
+                      tooltip="确认"
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); confirmRenameConversation() }}
+                      className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md text-green-500 hover:text-green-600 transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </AgentActionButton>
+                  ) : (
+                    <>
+                      <AgentActionButton tooltip="编辑标题" className="p-1.5 text-gray-400 hover:text-gray-700 disabled:text-gray-300 disabled:hover:text-gray-300 disabled:cursor-not-allowed dark:hover:text-gray-200 dark:disabled:text-gray-600 dark:disabled:hover:text-gray-600" onClick={(e) => startRenameConversation(e, item.id, item.title)} disabled={isGeneratingTitle}>
+                        <EditIcon className="w-4 h-4" />
+                      </AgentActionButton>
+                      <AgentActionButton tooltip="删除" className="p-1.5 text-gray-400 hover:text-red-500" onClick={(e) => { e.stopPropagation(); handleDeleteConversation(item.id) }}>
+                        <TrashIcon className="w-4 h-4" />
+                      </AgentActionButton>
+                    </>
+                  )}
                 </div>
               </div>
             )
@@ -834,7 +919,18 @@ export default function AgentWorkspace() {
             <button type="button" onClick={() => setSidebarCollapsed(false)} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors" title="展开对话列表">
               <SidebarLeftIcon className="w-5 h-5" />
             </button>
-            <div className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate flex-1 text-center px-2">{conversation?.title || 'Agent'}</div>
+            <button
+              type="button"
+              onClick={() => {
+                setSidebarCollapsed(false)
+                if (conversation) {
+                  useStore.getState().setAgentEditingConversationId(conversation.id)
+                }
+              }}
+              className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate flex-1 text-center px-2 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded transition-colors"
+            >
+              {conversation?.title || 'Agent'}
+            </button>
             <button type="button" onClick={createConversation} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors" title="新对话">
               <EditIcon className="w-5 h-5" />
             </button>
@@ -872,11 +968,12 @@ export default function AgentWorkspace() {
                 const siblingRounds = !isAssistant && round ? getAgentSiblingRounds(conversation, round) : []
                 const siblingIndex = round ? siblingRounds.findIndex((item) => item.id === round.id) : -1
                 const hasBranches = siblingRounds.length > 1
-                const tasksForRound = isAssistant ? getRoundTasks(round ?? null, tasks).filter(Boolean) as TaskRecord[] : []
+                const taskSlotsForRound = isAssistant ? getRoundTaskSlots(round ?? null, tasks) : []
+                const tasksForRound = taskSlotsForRound.map((slot) => slot.task).filter(Boolean) as TaskRecord[]
                 const favoriteTasksForRound = tasksForRound.filter((task) => (task.outputImages?.length ?? 0) > 0)
                 const hasRoundFavoriteTasks = favoriteTasksForRound.length > 0
                 const allRoundTasksFavorited = hasRoundFavoriteTasks && favoriteTasksForRound.every((task) => task.isFavorite)
-                const assistantBlocks = isAssistant ? getAgentAssistantBlocks(round ?? null, tasksForRound, tasks, Boolean(message.content.trim())) : []
+                const assistantBlocks = isAssistant ? getAgentAssistantBlocks(round ?? null, taskSlotsForRound, tasks, Boolean(message.content.trim())) : []
                 const inputImagesForRound = (round?.inputImageIds || []).map(id => ({ id, dataUrl: '' }))
                 const parts = getPromptMentionParts(message.content, inputImagesForRound)
                 return (
@@ -955,6 +1052,14 @@ export default function AgentWorkspace() {
                                 return (
                                   <div key={block.key} className={index > 0 ? 'mt-3' : undefined}>
                                     <AgentWebSearchInlineStatus status={block.status} />
+                                  </div>
+                                )
+                              }
+                              if (block.type === 'deleted-image-task') {
+                                return (
+                                  <div key={block.key} className="mt-4 w-full min-w-[16rem] max-w-sm rounded-xl bg-gray-50/50 dark:bg-white/[0.02] border border-dashed border-gray-200 dark:border-white/[0.08] p-4 flex min-h-[120px] flex-col items-center justify-center text-gray-400 dark:text-gray-500" onClick={e => e.stopPropagation()}>
+                                    <TrashIcon className="w-6 h-6 mb-2 opacity-50" />
+                                    <span className="text-xs">[Image Removed]</span>
                                   </div>
                                 )
                               }
