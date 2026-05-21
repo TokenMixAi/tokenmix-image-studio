@@ -464,6 +464,23 @@ function normalizeAgentConversations(value: unknown): AgentConversation[] {
     })
 }
 
+function mergeImportedAgentConversations(current: AgentConversation[], imported: AgentConversation[]) {
+  const merged = [...current]
+  const indexes = new Map(merged.map((conversation, index) => [conversation.id, index]))
+
+  for (const conversation of imported) {
+    const index = indexes.get(conversation.id)
+    if (index == null) {
+      indexes.set(conversation.id, merged.length)
+      merged.push(conversation)
+    } else {
+      merged[index] = conversation
+    }
+  }
+
+  return merged
+}
+
 function createAgentConversation(now = Date.now()): AgentConversation {
   return {
     id: genId(),
@@ -4128,10 +4145,17 @@ export async function importData(file: File, options: ImportOptions = { importCo
 
       const tasks = await getAllTasks()
       useStore.getState().setTasks(tasks)
-      const agentConversations = normalizeAgentConversations(data.agentConversations)
-      useStore.setState({
-        agentConversations,
-        activeAgentConversationId: agentConversations[0]?.id ?? null,
+      const importedAgentConversations = normalizeAgentConversations(data.agentConversations)
+        .filter((conversation) => !isEmptyAgentConversation(conversation))
+      useStore.setState((state) => {
+        const agentConversations = mergeImportedAgentConversations(state.agentConversations, importedAgentConversations)
+        const activeAgentConversationId = state.activeAgentConversationId && agentConversations.some((conversation) => conversation.id === state.activeAgentConversationId)
+          ? state.activeAgentConversationId
+          : importedAgentConversations[0]?.id ?? agentConversations[0]?.id ?? null
+        return {
+          agentConversations,
+          activeAgentConversationId,
+        }
       })
       skipSupportPromptForImportedData(tasks)
       scheduleThumbnailBackfill(importedImageIds)
