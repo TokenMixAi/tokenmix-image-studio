@@ -61,9 +61,26 @@ vi.mock('./lib/api', () => ({
 vi.mock('./lib/agentApi', () => ({
   callAgentConversationTitleApi: vi.fn(async () => '标题'),
   callAgentResponsesApi: vi.fn(() => new Promise(() => {})),
+  callBatchImageSingle: vi.fn(async (opts: { batchItemId: string; prompt: string }) => ({
+    batchItemId: opts.batchItemId,
+    image: { dataUrl: 'data:image/png;base64,batch-output', revisedPrompt: opts.prompt },
+    error: null,
+  })),
+  parseBatchImageCallArguments: vi.fn((args: string) => {
+    try {
+      const parsed = JSON.parse(args) as { images?: Array<{ id?: string; prompt?: string; reference_ids?: string[] }> }
+      return parsed.images?.map((item, index) => ({
+        id: item.id || `image_${index + 1}`,
+        prompt: item.prompt || '',
+        reference_ids: item.reference_ids || [],
+      })) ?? null
+    } catch {
+      return null
+    }
+  }),
 }))
 import { clearImages, putImage } from './lib/db'
-import { callAgentResponsesApi } from './lib/agentApi'
+import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { cleanStaleAgentInputDrafts, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, markInterruptedOpenAIRunningTasks, regenerateAgentAssistantMessage, removeTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -700,6 +717,139 @@ describe('agent context for removed outputs', () => {
     const serializedConversations = JSON.stringify(state.agentConversations)
     expect(serializedConversations).toContain('function_call_output')
     expect(serializedConversations).not.toContain('batch-deleted-base64')
+  })
+})
+
+describe('agent batch reference resolution', () => {
+  const responsesProfile = createDefaultOpenAIProfile({
+    id: 'responses-profile',
+    apiKey: 'test-key',
+    apiMode: 'responses',
+    model: DEFAULT_RESPONSES_MODEL,
+  })
+
+  beforeEach(async () => {
+    await clearImages()
+    await putImage(imageA)
+    await putImage(imageB)
+    vi.mocked(callAgentResponsesApi).mockClear()
+    vi.mocked(callBatchImageSingle).mockClear()
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiMode: 'responses',
+        model: DEFAULT_RESPONSES_MODEL,
+        profiles: [responsesProfile],
+        activeProfileId: responsesProfile.id,
+      }),
+      prompt: '继续生成',
+      inputImages: [],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      appMode: 'agent',
+      tasks: [
+        task({ id: 'task-branch-a', outputImages: [imageA.id], sourceMode: 'agent', agentRoundId: 'round-2-a' }),
+        task({ id: 'task-branch-b', outputImages: [imageB.id], sourceMode: 'agent', agentRoundId: 'round-2-b' }),
+      ],
+      agentConversations: [agentConversation({
+        id: 'conversation-a',
+        activeRoundId: 'round-2-b',
+        rounds: [
+          {
+            id: 'round-1',
+            index: 1,
+            parentRoundId: null,
+            userMessageId: 'user-1',
+            assistantMessageId: 'assistant-1',
+            prompt: '画基础图',
+            inputImageIds: [],
+            outputTaskIds: [],
+            status: 'done',
+            error: null,
+            createdAt: 1,
+            finishedAt: 2,
+          },
+          {
+            id: 'round-2-a',
+            index: 2,
+            parentRoundId: 'round-1',
+            userMessageId: 'user-2-a',
+            assistantMessageId: 'assistant-2-a',
+            prompt: '分支 A',
+            inputImageIds: [],
+            outputTaskIds: ['task-branch-a'],
+            status: 'done',
+            error: null,
+            createdAt: 3,
+            finishedAt: 4,
+          },
+          {
+            id: 'round-2-b',
+            index: 2,
+            parentRoundId: 'round-1',
+            userMessageId: 'user-2-b',
+            assistantMessageId: 'assistant-2-b',
+            prompt: '分支 B',
+            inputImageIds: [],
+            outputTaskIds: ['task-branch-b'],
+            status: 'done',
+            error: null,
+            createdAt: 5,
+            finishedAt: 6,
+          },
+        ],
+        messages: [
+          { id: 'user-1', role: 'user', content: '画基础图', roundId: 'round-1', createdAt: 1 },
+          { id: 'assistant-1', role: 'assistant', content: '完成', roundId: 'round-1', createdAt: 2 },
+          { id: 'user-2-a', role: 'user', content: '分支 A', roundId: 'round-2-a', createdAt: 3 },
+          { id: 'assistant-2-a', role: 'assistant', content: '完成', roundId: 'round-2-a', outputTaskIds: ['task-branch-a'], createdAt: 4 },
+          { id: 'user-2-b', role: 'user', content: '分支 B', roundId: 'round-2-b', createdAt: 5 },
+          { id: 'assistant-2-b', role: 'assistant', content: '完成', roundId: 'round-2-b', outputTaskIds: ['task-branch-b'], createdAt: 6 },
+        ],
+      })],
+      activeAgentConversationId: 'conversation-a',
+      agentEditingRoundId: null,
+      showToast: vi.fn(),
+    })
+  })
+
+  it('resolves batch references from the active branch path only', async () => {
+    vi.mocked(callAgentResponsesApi)
+      .mockResolvedValueOnce({
+        text: '',
+        images: [],
+        outputItems: [{
+          type: 'function_call',
+          name: 'generate_image_batch',
+          call_id: 'batch-call',
+          arguments: JSON.stringify({
+            images: [{
+              id: 'next-image',
+              prompt: '参考 <ref id="round-2-image-1" /> 生成',
+              reference_ids: ['round-2-image-1'],
+            }],
+          }),
+        }],
+        responseId: 'response-1',
+      })
+      .mockResolvedValueOnce({
+        text: '完成',
+        images: [],
+        outputItems: [{ type: 'message', content: [{ type: 'output_text', text: '完成' }] }],
+        responseId: 'response-2',
+      })
+
+    await submitAgentMessage()
+
+    for (let i = 0; i < 5 && vi.mocked(callBatchImageSingle).mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    expect(callBatchImageSingle).toHaveBeenCalled()
+    const batchArgs = vi.mocked(callBatchImageSingle).mock.calls[0][0]
+    expect(batchArgs.referenceImageDataUrls).toEqual([imageB.dataUrl])
+    expect(batchArgs.referenceImageDataUrls).not.toContain(imageA.dataUrl)
+    expect(batchArgs.referenceIds).toEqual(['round-2-image-1'])
   })
 })
 

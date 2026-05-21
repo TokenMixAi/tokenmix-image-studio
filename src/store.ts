@@ -3002,7 +3002,7 @@ async function executeAgentRound(
         // Try to find the image id from the round's output tasks by matching generated ref ids
         const latestConv = useStore.getState().agentConversations.find((item) => item.id === conversationId)
         if (!latestConv) continue
-        for (const r of latestConv.rounds) {
+        for (const r of getAgentRoundPath(latestConv, roundId)) {
           const outputImages = collectAgentRoundOutputImageSlots(r, useStore.getState().tasks)
           for (let imgIdx = 0; imgIdx < outputImages.length; imgIdx++) {
             const generatedRefId = getAgentGeneratedImageReferenceId(r, imgIdx)
