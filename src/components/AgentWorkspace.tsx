@@ -5,6 +5,7 @@ import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { collectWebSearchCalls, getAgentRoundOutputItems, getWebSearchStatusForCalls, type AgentWebSearchStatus } from '../lib/agentWebSearch'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+import { downloadImageIds } from '../lib/downloadImages'
 import TaskCard from './TaskCard'
 import ViewportTooltip from './ViewportTooltip'
 import MarkdownRenderer from './MarkdownRenderer'
@@ -1162,39 +1163,26 @@ export default function AgentWorkspace() {
                             }}>
                               <FavoriteIcon className="w-4 h-4" filled={allRoundTasksFavorited} />
                             </AgentActionButton>
-                            <AgentActionButton tooltip="下载所有图片" className={`p-1.5 rounded-md transition-colors ${getRoundTasks(round ?? null, tasks).filter(Boolean).length > 0 ? 'text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10' : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={getRoundTasks(round ?? null, tasks).filter(Boolean).length === 0} onClick={async () => {
-                              const imageIds = tasksForRound.flatMap(t => t.outputImages || []);
-                              if (imageIds.length === 0) return;
-                              let successCount = 0;
-                              let failCount = 0;
-                              for (const id of imageIds) {
-                                try {
-                                  let url = getCachedImage(id);
-                                  if (!url) url = await ensureImageCached(id);
-                                  if (!url) { failCount++; continue; }
-                                  const res = await fetch(url);
-                                  const blob = await res.blob();
-                                  const objUrl = URL.createObjectURL(blob);
-                                  const a = document.createElement('a');
-                                  a.href = objUrl;
-                                  const ext = blob.type.split('/')[1] || 'png';
-                                  a.download = `image-${Date.now()}-${successCount}.${ext}`;
-                                  document.body.appendChild(a);
-                                  a.click();
-                                  document.body.removeChild(a);
-                                  URL.revokeObjectURL(objUrl);
-                                  successCount++;
-                                  await new Promise(r => setTimeout(r, 100));
-                                } catch {
-                                  failCount++;
-                                }
-                              }
-                              if (successCount === 0) useStore.getState().showToast('下载失败', 'error');
-                              else if (failCount > 0) useStore.getState().showToast(`部分下载失败：成功 ${successCount}，失败 ${failCount}`, 'error');
-                              else useStore.getState().showToast(successCount > 1 ? `下载成功：${successCount} 张图片` : '下载成功', 'success');
-                            }}>
-                              <DownloadIcon className="w-4 h-4" />
-                            </AgentActionButton>
+                                                        <AgentActionButton tooltip="下载所有图片" className={`p-1.5 rounded-md transition-colors ${getRoundTasks(round ?? null, tasks).filter(Boolean).length > 0 ? 'text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10' : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={getRoundTasks(round ?? null, tasks).filter(Boolean).length === 0} onClick={async () => {
+                               const imageIds = tasksForRound.flatMap(t => t.outputImages || []);
+                               if (imageIds.length === 0) return;
+                               try {
+                                 const roundIndex = round?.index ?? 0;
+                                 const { successCount, failCount } = await downloadImageIds(imageIds, 'agent-round-' + roundIndex);
+                                 if (successCount === 0) {
+                                   useStore.getState().showToast('下载失败', 'error');
+                                 } else if (failCount > 0) {
+                                   useStore.getState().showToast('部分下载失败：成功 ' + successCount + '，失败 ' + failCount, 'error');
+                                 } else {
+                                   useStore.getState().showToast(successCount > 1 ? '下载成功：' + successCount + ' 张图片' : '下载成功', 'success');
+                                 }
+                               } catch (err) {
+                                 console.error(err);
+                                 useStore.getState().showToast('下载失败', 'error');
+                               }
+                             }}>
+                               <DownloadIcon className="w-4 h-4" />
+                             </AgentActionButton>
                             <AgentActionButton tooltip="删除消息" className="p-1.5 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors" onClick={() => {
                               if (round) handleDeleteMessage(message, round);
                             }}>

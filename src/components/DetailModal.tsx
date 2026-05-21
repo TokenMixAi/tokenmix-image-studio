@@ -315,10 +315,10 @@ export default function DetailModal() {
 
   const handleDownloadCurrentOutput = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!currentOutputImageId) return
+    if (!currentOutputImageId || !task) return
 
     try {
-      const result = await downloadImageIds([currentOutputImageId], `image-${Date.now()}`)
+      const result = await downloadImageIds([currentOutputImageId], `task-${task.id}`)
       if (result.successCount === 0) {
         showToast('下载失败', 'error')
       } else {
@@ -332,10 +332,10 @@ export default function DetailModal() {
 
   const handleDownloadAllOutputs = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!task.outputImages?.length) return
+    if (!task?.outputImages?.length) return
 
     try {
-      const result = await downloadImageIds(task.outputImages, `task-${task.id}-outputs`)
+      const result = await downloadImageIds(task.outputImages, `task-${task.id}`)
       if (result.successCount === 0) {
         showToast('下载失败', 'error')
       } else if (result.failCount > 0) {
@@ -350,10 +350,10 @@ export default function DetailModal() {
   }
 
   const handleDownloadPartialImages = async () => {
-    if (!streamPartialImageIds.length) return
+    if (!task || !streamPartialImageIds.length) return
 
     try {
-      const result = await downloadImageIds(streamPartialImageIds, `task-${task.id}-partials`)
+      const result = await downloadImageIds(streamPartialImageIds, `task-${task.id}-partial`)
       if (result.successCount === 0) {
         showToast('下载失败', 'error')
       } else if (result.failCount > 0) {

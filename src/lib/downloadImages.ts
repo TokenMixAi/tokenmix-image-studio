@@ -12,6 +12,11 @@ export interface DownloadImagesResult {
   failCount: number
 }
 
+export function formatExportFileTime(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`
+}
+
 export async function downloadImageIds(imageIds: string[], fileNameBase = 'images'): Promise<DownloadImagesResult> {
   if (imageIds.length === 0) return { successCount: 0, failCount: 0 }
 
@@ -38,12 +43,14 @@ export async function downloadImageIds(imageIds: string[], fileNameBase = 'image
   return { successCount, failCount }
 }
 
-async function getImageBlob(imageId: string): Promise<Blob> {
-  const src = await ensureImageCached(imageId)
-  if (!src) throw new Error(`找不到图片：${imageId}`)
+async function getImageBlob(imageIdOrUrl: string): Promise<Blob> {
+  let src = imageIdOrUrl
+  if (!imageIdOrUrl.startsWith('data:') && !imageIdOrUrl.startsWith('http://') && !imageIdOrUrl.startsWith('https://')) {
+    src = await ensureImageCached(imageIdOrUrl) ?? imageIdOrUrl
+  }
 
   const res = await fetch(src)
-  if (!res.ok && !src.startsWith('data:')) throw new Error(`读取图片失败：${imageId}`)
+  if (!res.ok && !src.startsWith('data:')) throw new Error(`读取图片失败：${imageIdOrUrl}`)
   return await res.blob()
 }
 
@@ -65,3 +72,4 @@ function getBlobExtension(blob: Blob): string {
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
+
