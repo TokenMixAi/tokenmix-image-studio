@@ -110,6 +110,12 @@ export default function HistoryModal({ onClose, ignoreOutsideClickRef }: History
     }
   }, [editingId, conversations])
 
+  useEffect(() => {
+    return () => {
+      setEditingId(null)
+    }
+  }, [setEditingId])
+
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
     [conversations],

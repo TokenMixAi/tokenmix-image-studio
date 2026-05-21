@@ -265,6 +265,18 @@ function getAgentAssistantBlocks(round: AgentRound | null, taskSlots: AgentRound
   return blocks
 }
 
+function getAgentAssistantCopyContent(fallbackContent: string, blocks: AgentAssistantBlock[]) {
+  if (!blocks.some((block) => block.type !== 'text')) return fallbackContent
+
+  const parts = blocks
+    .filter((block): block is Extract<AgentAssistantBlock, { type: 'text' }> => block.type === 'text')
+    .map((block) => block.content ?? '')
+    .map((content) => content.trim())
+    .filter(Boolean)
+
+  return parts.length > 0 ? parts.join('\n\n') : fallbackContent
+}
+
 function getConversationSearchText(conversation: AgentConversation) {
   return [
     conversation.title,
@@ -404,6 +416,12 @@ export default function AgentWorkspace() {
     setPullDownOffset(0)
     touchStartY.current = -1
   }
+
+  useEffect(() => {
+    if (sidebarCollapsed) {
+      setAgentEditingConversationId(null)
+    }
+  }, [sidebarCollapsed, setAgentEditingConversationId])
 
   useEffect(() => {
     if (appMode !== 'agent') return
@@ -1127,7 +1145,7 @@ export default function AgentWorkspace() {
                         {isAssistant ? (
                           <>
                             <AgentActionButton tooltip="复制输出文本" className={`p-1.5 rounded-md transition-colors ${message.content.trim() ? 'text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-white/[0.06]' : 'text-gray-300 dark:text-gray-600 opacity-50 cursor-not-allowed'}`} disabled={!message.content.trim()} onClick={() => {
-                              void handleCopyMessage(message.content, '输出文本已复制', '复制输出文本失败');
+                              void handleCopyMessage(getAgentAssistantCopyContent(message.content, assistantBlocks), '输出文本已复制', '复制输出文本失败');
                             }}>
                               <CopyIcon className="w-4 h-4" />
                             </AgentActionButton>
