@@ -35,29 +35,28 @@
 
 <div align="center">
   <b>桌面端主界面</b><br>
-  <img src="docs/images/example_pc_1.png" alt="桌面端主界面" />
+  <img src="docs/images/example_pc_1.jpg" alt="桌面端主界面" />
 </div>
 
 <br>
 
 <div align="center">
   <b>任务详情与实际参数</b><br>
-  <img src="docs/images/example_pc_2.png" alt="任务详情与实际参数" />
+  <img src="docs/images/example_pc_2.jpg" alt="任务详情与实际参数" />
 </div>
 
 <br>
 
 <div align="center">
   <b>桌面端批量选择</b><br>
-  <img src="docs/images/example_pc_3.png" alt="桌面端批量选择" />
+  <img src="docs/images/example_pc_3.jpg" alt="桌面端批量选择" />
 </div>
 
 <br>
 
 <div align="center">
   <b>桌面端 Agent 模式</b><br>
-  <!-- TODO: 替换为实际截图 -->
-  <img src="docs/images/example_agent_pc.png" alt="桌面端 Agent 模式" />
+  <img src="docs/images/example_pc_4.jpg" alt="桌面端 Agent 模式" />
 </div>
 
 <br>
