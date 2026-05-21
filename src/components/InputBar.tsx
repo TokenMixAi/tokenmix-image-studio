@@ -1253,19 +1253,19 @@ export default function InputBar() {
     return () => document.removeEventListener('selectionchange', handleSelectionChange)
   }, [])
 
-  // 点击屏幕两侧空白使输入框失焦
+  // 点击屏幕外部、空白处、卡片间隙等，使输入栏相关输入框失焦
   useEffect(() => {
     const handleGlobalMouseDown = (e: MouseEvent) => {
-      const maxW = 1280
-      const clientWidth = document.documentElement.clientWidth
-      if (clientWidth <= maxW) return
+      const target = e.target as HTMLElement | null
+      if (!target) return
 
-      const leftBoundary = (clientWidth - maxW) / 2
-      const rightBoundary = clientWidth - leftBoundary
-
-      if (e.clientX < leftBoundary || e.clientX > rightBoundary) {
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur()
+      if (document.activeElement instanceof HTMLElement) {
+        // 如果当前聚焦的元素属于输入栏（主输入框、数量或压缩率输入框等）
+        if (document.activeElement.closest('[data-input-bar]')) {
+          // 如果点击的区域不在输入栏内部
+          if (!target.closest('[data-input-bar]')) {
+            document.activeElement.blur()
+          }
         }
       }
     }
