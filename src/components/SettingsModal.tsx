@@ -1300,7 +1300,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。
+                    开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。
                   </div>
                 </div>
                 <div className="block">
