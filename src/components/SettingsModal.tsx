@@ -24,6 +24,7 @@ import {
   switchApiProfileProvider,
 } from '../lib/apiProfiles'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { requestBrowserNotificationPermission, type BrowserNotificationPermissionResult } from '../lib/browserNotification'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type CustomProviderDefinition } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -660,6 +661,33 @@ export default function SettingsModal() {
     if (value !== draft.agentMaxToolRounds) commitSettings({ ...draft, agentMaxToolRounds: value })
   }, [agentMaxToolRoundsInput, draft])
 
+  const showNotificationPermissionMessage = (result: Exclude<BrowserNotificationPermissionResult, { ok: true }>) => {
+    if (result.reason === 'unsupported') {
+      showToast('当前浏览器不支持系统通知', 'error')
+    } else if (result.reason === 'insecure') {
+      showToast('系统通知需要 HTTPS 或 localhost 安全上下文', 'error')
+    } else if (result.reason === 'denied') {
+      showToast('通知权限已被浏览器拒绝，请在地址栏左侧的网站设置中手动开启', 'error')
+    } else {
+      showToast('没有开启系统通知', 'info')
+    }
+  }
+
+  const toggleTaskCompletionNotification = async () => {
+    if (draft.taskCompletionNotification) {
+      commitSettings({ ...draft, taskCompletionNotification: false })
+      return
+    }
+
+    const result = await requestBrowserNotificationPermission()
+    if (result.ok) {
+      commitSettings({ ...draft, taskCompletionNotification: true })
+      showToast('任务完成通知已开启', 'success')
+    } else {
+      showNotificationPermissionMessage(result)
+    }
+  }
+
   useCloseOnEscape(showSettings, handleClose)
   usePreventBackgroundScroll(showSettings, showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
 
@@ -1255,6 +1283,24 @@ export default function SettingsModal() {
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
                     开启后，即使任务成功生成，也会在任务卡片和详情页显示重试按钮。
+                  </div>
+                </div>
+                <div className="block">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="block text-sm text-gray-600 dark:text-gray-300">任务完成后发送系统通知</span>
+                    <button
+                      type="button"
+                      onClick={() => { void toggleTaskCompletionNotification() }}
+                      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.taskCompletionNotification ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      role="switch"
+                      aria-checked={draft.taskCompletionNotification}
+                      aria-label="任务完成后发送系统通知"
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.taskCompletionNotification ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+                    </button>
+                  </div>
+                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                    开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。
                   </div>
                 </div>
                 <div className="block">

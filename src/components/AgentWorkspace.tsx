@@ -692,11 +692,21 @@ export default function AgentWorkspace() {
 
   const handleDeleteMessage = (message: AgentMessage, round: AgentRound) => {
     const isUserMessage = message.role === 'user'
+    const existingTaskIds = new Set(tasks.map((task) => task.id))
+    const assistantTaskIds = isUserMessage
+      ? []
+      : Array.from(new Set([
+          ...(message.outputTaskIds ?? []),
+          ...round.outputTaskIds,
+          ...tasks
+            .filter((task) => task.agentMessageId === message.id || task.agentRoundId === round.id)
+            .map((task) => task.id),
+        ])).filter((taskId) => existingTaskIds.has(taskId))
     setConfirmDialog({
       title: isUserMessage ? '删除轮次' : '删除消息',
       message: isUserMessage
         ? '确定要删除这轮记录吗？这会删除这条消息和它的输出，后续消息会被保留。'
-        : '确定要删除这条消息吗？关联的图片任务不会从画廊中删除。',
+        : '确定要删除这条消息吗？这会同时删除这条回复生成的图片。',
       action: async () => {
         if (isUserMessage) {
           if (round.outputTaskIds.length > 0) await removeMultipleTasks(round.outputTaskIds)
@@ -729,6 +739,8 @@ export default function AgentWorkspace() {
           })
           return
         }
+
+        if (assistantTaskIds.length > 0) await removeMultipleTasks(assistantTaskIds)
 
         useStore.setState((state) => ({
           agentConversations: state.agentConversations.map((item) =>

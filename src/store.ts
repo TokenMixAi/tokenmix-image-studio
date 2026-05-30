@@ -43,6 +43,7 @@ import {
 import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage, type BatchImageCallResult } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
+import { showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
@@ -332,6 +333,12 @@ function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: strin
 
 function isAgentTask(task: TaskRecord) {
   return task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
+}
+
+function showTaskCompletionNotification(title: string, body: string) {
+  const settings = normalizeSettings(useStore.getState().settings)
+  if (!settings.taskCompletionNotification) return
+  showBrowserNotification(title, { body })
 }
 
 function countSuccessfulOutputImages(tasks: TaskRecord[]) {
@@ -1846,6 +1853,7 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
     elapsed: Date.now() - task.createdAt,
   })
   useStore.getState().showToast(`fal.ai 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `fal.ai 任务已恢复，共 ${outputIds.length} 张图片。`)
 }
 
 async function recoverFalTask(taskId: string) {
@@ -3713,6 +3721,10 @@ async function executeAgentRound(
     }))
 
     useStore.getState().showToast(outputIds.length > 0 ? 'Agent 已生成图片' : 'Agent 已回复', 'success')
+    showTaskCompletionNotification(
+      outputIds.length > 0 ? 'Agent 已生成图片' : 'Agent 已回复',
+      outputIds.length > 0 ? `Agent 回复已结束，共生成 ${outputIds.length} 张图片。` : 'Agent 回复已结束。',
+    )
   } catch (err) {
     if (controller.signal.aborted) {
       if (markAgentRoundStopped(conversationId, roundId)) {
@@ -3911,6 +3923,7 @@ async function executeTask(taskId: string) {
     void deleteUnreferencedImageIds(partialImageIdsToClean)
 
     useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
+    if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `生成完成，共 ${outputIds.length} 张图片。`)
     const currentMask = useStore.getState().maskDraft
     if (
       maskDataUrl &&
@@ -4281,6 +4294,7 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
     elapsed: Date.now() - task.createdAt,
   })
   useStore.getState().showToast(`自定义异步任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `自定义异步任务已恢复，共 ${outputIds.length} 张图片。`)
 }
 
 async function recoverCustomTask(taskId: string) {
