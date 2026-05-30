@@ -189,6 +189,8 @@ export interface TaskRecord {
   elapsed: number | null
   /** 是否收藏 */
   isFavorite?: boolean
+  /** 所属收藏夹 ID 列表 */
+  favoriteCollectionIds?: string[]
   /** 来源模式：画廊 / Agent */
   sourceMode?: AppMode
   /** Agent 对话 ID */
@@ -203,6 +205,13 @@ export interface TaskRecord {
   agentBatchCallId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
+}
+
+export interface FavoriteCollection {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
 }
 
 // ===== Agent 模式 =====
