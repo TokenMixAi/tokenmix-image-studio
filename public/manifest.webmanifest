@@ -1,7 +1,7 @@
 {
-  "name": "GPT Image Playground",
+  "name": "TokenMix 图像工坊",
   "short_name": "GPT Image",
-  "description": "GPT Image Playground 图像生成工作台",
+  "description": "TokenMix 图像工坊 · 图像生成与编辑",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
